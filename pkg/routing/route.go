@@ -1,3 +1,5 @@
+// Package routing 提供消息路由功能
+// 本文件实现基于配置绑定的代理路由
 package routing
 
 import (
@@ -6,39 +8,53 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
-// RouteInput contains the routing context from an inbound message.
+// RouteInput 路由输入
+// 包含入站消息的路由上下文信息
 type RouteInput struct {
-	Channel    string
-	AccountID  string
-	Peer       *RoutePeer
-	ParentPeer *RoutePeer
-	GuildID    string
-	TeamID     string
+	Channel    string     // 渠道名称
+	AccountID  string     // 账户 ID
+	Peer       *RoutePeer // 路由对等方
+	ParentPeer *RoutePeer // 父对等方（回复目标）
+	GuildID    string     // Discord Guild ID
+	TeamID     string     // Slack Team ID
 }
 
-// ResolvedRoute is the result of agent routing.
+// ResolvedRoute 路由解析结果
 type ResolvedRoute struct {
-	AgentID        string
-	Channel        string
-	AccountID      string
-	SessionKey     string
-	MainSessionKey string
-	MatchedBy      string // "binding.peer", "binding.peer.parent", "binding.guild", "binding.team", "binding.account", "binding.channel", "default"
+	AgentID        string // 代理 ID
+	Channel        string // 渠道名称
+	AccountID      string // 账户 ID
+	SessionKey     string // 会话键
+	MainSessionKey string // 主会话键
+	MatchedBy      string // 匹配方式：binding.peer, binding.peer.parent, binding.guild, binding.team, binding.account, binding.channel, default
 }
 
-// RouteResolver determines which agent handles a message based on config bindings.
+// RouteResolver 路由解析器
+// 根据配置绑定确定哪个代理处理消息
 type RouteResolver struct {
 	cfg *config.Config
 }
 
-// NewRouteResolver creates a new route resolver.
+// NewRouteResolver 创建新的路由解析器
+//
+// 参数：
+// - cfg: 全局配置
+//
+// 返回：
+// - *RouteResolver: 路由解析器
 func NewRouteResolver(cfg *config.Config) *RouteResolver {
 	return &RouteResolver{cfg: cfg}
 }
 
-// ResolveRoute determines which agent handles the message and constructs session keys.
-// Implements the 7-level priority cascade:
+// ResolveRoute 解析消息路由并构建会话键
+// 实现 7 级优先级级联：
 // peer > parent_peer > guild > team > account > channel_wildcard > default
+//
+// 参数：
+// - input: 路由输入
+//
+// 返回：
+// - ResolvedRoute: 路由解析结果
 func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	channel := strings.ToLower(strings.TrimSpace(input.Channel))
 	accountID := NormalizeAccountID(input.AccountID)
