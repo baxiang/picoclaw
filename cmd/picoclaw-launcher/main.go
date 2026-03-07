@@ -1,9 +1,9 @@
-// PicoClaw Launcher - Standalone HTTP service
+// PicoClaw Launcher - 独立 HTTP 服务
 //
-// Provides a web-based JSON editor for picoclaw config files,
-// with OAuth provider authentication support.
+// 提供基于网页的 JSON 配置编辑器，
+// 支持 OAuth 提供商认证。
 //
-// Usage:
+// 使用方法：
 //
 //	go build -o picoclaw-launcher ./cmd/picoclaw-launcher/
 //	./picoclaw-launcher [config.json]
@@ -30,21 +30,23 @@ import (
 //go:embed internal/ui/index.html
 var staticFiles embed.FS
 
+// main PicoClaw Launcher 主函数
+// 启动基于网页的配置编辑器服务
 func main() {
-	public := flag.Bool("public", false, "Listen on all interfaces (0.0.0.0) instead of localhost only")
+	public := flag.Bool("public", false, "监听所有网络接口 (0.0.0.0) 而不仅是 localhost")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "PicoClaw Launcher - A web-based configuration editor\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] [config.json]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Arguments:\n")
-		fmt.Fprintf(os.Stderr, "  config.json    Path to the configuration file (default: ~/.picoclaw/config.json)\n\n")
-		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "PicoClaw Launcher - 基于网页的配置编辑器\n\n")
+		fmt.Fprintf(os.Stderr, "使用方法：%s [选项] [config.json]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "参数:\n")
+		fmt.Fprintf(os.Stderr, "  config.json    配置文件路径 (默认：~/.picoclaw/config.json)\n\n")
+		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s                          Use default config path\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s ./config.json             Specify a config file\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\n示例:\n")
+		fmt.Fprintf(os.Stderr, "  %s                          使用默认配置路径\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s ./config.json             指定配置文件\n", os.Args[0])
 		fmt.Fprintf(
 			os.Stderr,
-			"  %s -public ./config.json     Allow access from other devices on the network\n",
+			"  %s -public ./config.json     允许网络中其他设备访问\n",
 			os.Args[0],
 		)
 	}
