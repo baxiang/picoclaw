@@ -4,6 +4,19 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package agent 提供了 PicoClaw AI 代理的核心实现
+// 主要功能包括：
+// - AgentLoop: 代理主循环，处理消息队列、调用 LLM、执行工具
+// - AgentInstance: 单个代理实例，包含工作空间、会话管理、上下文构建等
+// - AgentRegistry: 代理注册表，管理多个代理实例和消息路由
+//
+// PicoClaw 是一个超轻量级个人 AI 助手，设计目标是在低成本硬件上运行
+// 核心特点：
+// - 支持多种通讯渠道（Telegram、Discord、微信等）
+// - 支持多种 LLM 提供商（OpenAI、Anthropic、Gemini 等）
+// - 可扩展的技能系统和工具调用机制
+// - 会话记忆和自动摘要功能
+
 package agent
 
 import (
@@ -19,23 +32,42 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/channels"
-	"github.com/sipeed/picoclaw/pkg/commands"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/constants"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/mcp"
-	"github.com/sipeed/picoclaw/pkg/media"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/routing"
-	"github.com/sipeed/picoclaw/pkg/skills"
-	"github.com/sipeed/picoclaw/pkg/state"
-	"github.com/sipeed/picoclaw/pkg/tools"
-	"github.com/sipeed/picoclaw/pkg/utils"
-	"github.com/sipeed/picoclaw/pkg/voice"
+	"github.com/sipeed/picoclaw/pkg/bus"         // 消息总线，处理 inbound/outbound 消息
+	"github.com/sipeed/picoclaw/pkg/channels"    // 通讯渠道管理（Telegram、Discord 等）
+	"github.com/sipeed/picoclaw/pkg/commands"    // 内置命令系统（/help、/switch 等）
+	"github.com/sipeed/picoclaw/pkg/config"      // 配置管理
+	"github.com/sipeed/picoclaw/pkg/constants"   // 常量定义（内部频道标识等）
+	"github.com/sipeed/picoclaw/pkg/logger"      // 日志系统
+	"github.com/sipeed/picoclaw/pkg/mcp"         // MCP (Model Context Protocol) 管理
+	"github.com/sipeed/picoclaw/pkg/media"       // 媒体文件存储和管理
+	"github.com/sipeed/picoclaw/pkg/providers"   // LLM 提供商接口和实现
+	"github.com/sipeed/picoclaw/pkg/routing"     // 消息路由系统
+	"github.com/sipeed/picoclaw/pkg/skills"      // 技能系统
+	"github.com/sipeed/picoclaw/pkg/state"       // 状态管理（持久化最后频道等）
+	"github.com/sipeed/picoclaw/pkg/tools"       // 工具实现（文件操作、Shell、Web 搜索等）
+	"github.com/sipeed/picoclaw/pkg/utils"       // 通用工具函数
+	"github.com/sipeed/picoclaw/pkg/voice"       // 语音转写功能
 )
 
+// AgentLoop 是 AI 代理的主循环控制器
+// 负责：
+// - 从消息总线消费 inbound 消息
+// - 调用 LLM 进行处理
+// - 执行工具调用
+// - 发布 outbound 响应
+//
+// 字段说明：
+// - bus: 消息总线，用于接收和发送消息
+// - cfg: 全局配置
+// - registry: 代理注册表，管理多个代理实例
+// - state: 状态管理器，持久化运行时状态
+// - running: 原子布尔值，控制循环运行状态
+// - summarizing: 并发安全的映射，跟踪正在摘要的会话
+// - fallback: LLM 降级链，处理主模型失败时的备用方案
+// - channelManager: 渠道管理器
+// - mediaStore: 媒体文件存储器
+// - transcriber: 语音转写器
+// - cmdRegistry: 命令注册表（/help、/switch 等）
 type AgentLoop struct {
 	bus            *bus.MessageBus
 	cfg            *config.Config
@@ -50,22 +82,27 @@ type AgentLoop struct {
 	cmdRegistry    *commands.Registry
 }
 
-// processOptions configures how a message is processed
+// processOptions 配置消息处理的方式
+// 用于控制 runAgentLoop 函数的行为
 type processOptions struct {
-	SessionKey      string   // Session identifier for history/context
-	Channel         string   // Target channel for tool execution
-	ChatID          string   // Target chat ID for tool execution
-	UserMessage     string   // User message content (may include prefix)
-	Media           []string // media:// refs from inbound message
-	DefaultResponse string   // Response when LLM returns empty
-	EnableSummary   bool     // Whether to trigger summarization
-	SendResponse    bool     // Whether to send response via bus
-	NoHistory       bool     // If true, don't load session history (for heartbeat)
+	SessionKey      string   // 会话标识符，用于加载/保存对话历史和上下文
+	Channel         string   // 目标渠道名称，用于工具执行（如 telegram、discord）
+	ChatID          string   // 目标聊天 ID，用于工具执行
+	UserMessage     string   // 用户消息内容（可能包含命令前缀）
+	Media           []string // 来自入站消息的媒体文件引用（media:// 格式）
+	DefaultResponse string   // 当 LLM 返回空内容时的默认响应
+	EnableSummary   bool     // 是否触发会话摘要（用于长对话压缩）
+	SendResponse    bool     // 是否通过消息总线发送响应
+	NoHistory       bool     // 如果为 true，不加载会话历史（用于心跳请求）
 }
 
+// 常量定义
+
+// defaultResponse 是当 LLM 没有返回有效响应时的默认提示
+// 通常发生在工具迭代次数用尽但没有产生对话内容时
 const (
 	defaultResponse           = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
-	sessionKeyAgentPrefix     = "agent:"
+	sessionKeyAgentPrefix     = "agent:" // 会话键前缀，用于标识代理特定的会话
 	metadataKeyAccountID      = "account_id"
 	metadataKeyGuildID        = "guild_id"
 	metadataKeyTeamID         = "team_id"
@@ -73,6 +110,19 @@ const (
 	metadataKeyParentPeerID   = "parent_peer_id"
 )
 
+// NewAgentLoop 创建并初始化一个新的 AgentLoop 实例
+// 参数：
+// - cfg: 全局配置对象
+// - msgBus: 消息总线，用于接收和发送消息
+// - provider: LLM 提供商接口实现
+//
+// 初始化流程：
+// 1. 创建代理注册表，从配置加载所有代理实例
+// 2. 为所有代理注册共享工具（web 搜索、消息发送、spawn 子代理等）
+// 3. 设置降级链，用于 LLM 调用失败时的备用方案
+// 4. 创建状态管理器，使用默认代理的工作空间
+//
+// 返回初始化好的 AgentLoop 指针
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
@@ -80,14 +130,14 @@ func NewAgentLoop(
 ) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
 
-	// Register shared tools to all agents
+	// 为所有代理注册共享工具
 	registerSharedTools(cfg, msgBus, registry, provider)
 
-	// Set up shared fallback chain
+	// 设置共享降级链
 	cooldown := providers.NewCooldownTracker()
 	fallbackChain := providers.NewFallbackChain(cooldown)
 
-	// Create state manager using default agent's workspace for channel recording
+	// 使用默认代理的工作空间创建状态管理器（用于渠道记录）
 	defaultAgent := registry.GetDefaultAgent()
 	var stateManager *state.Manager
 	if defaultAgent != nil {
@@ -107,20 +157,36 @@ func NewAgentLoop(
 	return al
 }
 
-// registerSharedTools registers tools that are shared across all agents (web, message, spawn).
+// registerSharedTools 为所有代理注册共享工具
+// 这些工具在所有代理实例之间共享，包括：
+// - Web 搜索工具（支持多个搜索引擎：Brave、Tavily、DuckDuckGo、Perplexity、SearXNG、GLM）
+// - Web 抓取工具（获取网页内容）
+// - 硬件工具（I2C、SPI 总线操作，仅 Linux 可用）
+// - 消息工具（发送消息到指定渠道）
+// - 文件发送工具（发送媒体文件）
+// - 技能发现和安装工具
+// - Spawn 工具（创建子代理执行任务）
+//
+// 参数：
+// - cfg: 全局配置
+// - msgBus: 消息总线，用于消息工具的回调
+// - registry: 代理注册表
+// - provider: LLM 提供商
 func registerSharedTools(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	registry *AgentRegistry,
 	provider providers.LLMProvider,
 ) {
+	// 遍历所有已注册的代理
 	for _, agentID := range registry.ListAgentIDs() {
 		agent, ok := registry.GetAgent(agentID)
 		if !ok {
 			continue
 		}
 
-		// Web tools
+		// --- Web 搜索工具 ---
+		// 支持多个搜索引擎，可以同时配置多个，按优先级使用
 		if cfg.Tools.IsToolEnabled("web") {
 			searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
 				BraveAPIKey:          cfg.Tools.Web.Brave.APIKey,
@@ -151,6 +217,7 @@ func registerSharedTools(
 				agent.Tools.Register(searchTool)
 			}
 		}
+		// Web 抓取工具：获取网页内容，有限制大小保护
 		if cfg.Tools.IsToolEnabled("web_fetch") {
 			fetchTool, err := tools.NewWebFetchToolWithProxy(50000, cfg.Tools.Web.Proxy, cfg.Tools.Web.FetchLimitBytes)
 			if err != nil {
@@ -160,7 +227,8 @@ func registerSharedTools(
 			}
 		}
 
-		// Hardware tools (I2C, SPI) - Linux only, returns error on other platforms
+		// --- 硬件工具 ---
+		// I2C 和 SPI 总线操作工具，仅 Linux 可用，其他平台返回错误
 		if cfg.Tools.IsToolEnabled("i2c") {
 			agent.Tools.Register(tools.NewI2CTool())
 		}
@@ -168,9 +236,11 @@ func registerSharedTools(
 			agent.Tools.Register(tools.NewSPITool())
 		}
 
-		// Message tool
+		// --- 消息工具 ---
+		// 允许 AI 主动发送消息到指定渠道
 		if cfg.Tools.IsToolEnabled("message") {
 			messageTool := tools.NewMessageTool()
+			// 设置发送回调，使用消息总线发送出站消息
 			messageTool.SetSendCallback(func(channel, chatID, content string) error {
 				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer pubCancel()
@@ -183,7 +253,8 @@ func registerSharedTools(
 			agent.Tools.Register(messageTool)
 		}
 
-		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
+		// --- 文件发送工具 ---
+		// 通过 MediaStore 发送媒体文件，store 在 SetMediaStore 时注入
 		if cfg.Tools.IsToolEnabled("send_file") {
 			sendFileTool := tools.NewSendFileTool(
 				agent.Workspace,
@@ -194,7 +265,8 @@ func registerSharedTools(
 			agent.Tools.Register(sendFileTool)
 		}
 
-		// Skill discovery and installation tools
+		// --- 技能发现和安装工具 ---
+		// 支持从 ClawHub 等注册中心搜索和安装技能
 		skills_enabled := cfg.Tools.IsToolEnabled("skills")
 		find_skills_enable := cfg.Tools.IsToolEnabled("find_skills")
 		install_skills_enable := cfg.Tools.IsToolEnabled("install_skill")
@@ -204,6 +276,7 @@ func registerSharedTools(
 				ClawHub:               skills.ClawHubConfig(cfg.Tools.Skills.Registries.ClawHub),
 			})
 
+			// 技能搜索工具（带缓存）
 			if find_skills_enable {
 				searchCache := skills.NewSearchCache(
 					cfg.Tools.Skills.SearchCache.MaxSize,
@@ -212,18 +285,21 @@ func registerSharedTools(
 				agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
 			}
 
+			// 技能安装工具
 			if install_skills_enable {
 				agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
 			}
 		}
 
-		// Spawn tool with allowlist checker
+		// --- Spawn 工具 ---
+		// 创建子代理执行特定任务，需要 subagent 功能启用
 		if cfg.Tools.IsToolEnabled("spawn") {
 			if cfg.Tools.IsToolEnabled("subagent") {
 				subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 				subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 				spawnTool := tools.NewSpawnTool(subagentManager)
 				currentAgentID := agentID
+				// 设置白名单检查器，控制子代理可以 spawn 到哪些目标代理
 				spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
 					return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
 				})
@@ -235,14 +311,30 @@ func registerSharedTools(
 	}
 }
 
+// Run 启动 AgentLoop 的主运行循环
+// 这是代理的核心入口点，负责持续监听和处理消息
+//
+// 参数：
+// - ctx: 上下文，用于控制取消和超时
+//
+// 主要流程：
+// 1. 设置运行状态为 true
+// 2. 初始化 MCP 服务器（如果启用）
+// 3. 进入主循环，持续消费 inbound 消息
+// 4. 对每个消息调用 processMessage 进行处理
+// 5. 处理响应（发送 outbound 消息或跳过）
+// 6. 直到上下文取消或 running 被设为 false
+//
+// 返回：
+// - 通常返回 nil，除非发生严重错误
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
-	// Initialize MCP servers for all agents
+	// --- 初始化 MCP 服务器 ---
+	// MCP (Model Context Protocol) 允许扩展 AI 的能力
 	if al.cfg.Tools.IsToolEnabled("mcp") {
 		mcpManager := mcp.NewManager()
-		// Ensure MCP connections are cleaned up on exit, regardless of initialization success
-		// This fixes resource leak when LoadFromMCPConfig partially succeeds then fails
+		// 确保退出时清理 MCP 连接资源
 		defer func() {
 			if err := mcpManager.Close(); err != nil {
 				logger.ErrorCF("agent", "Failed to close MCP manager",
@@ -252,6 +344,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			}
 		}()
 
+		// 获取默认代理的工作空间路径
 		defaultAgent := al.registry.GetDefaultAgent()
 		var workspacePath string
 		if defaultAgent != nil && defaultAgent.Workspace != "" {
@@ -260,13 +353,14 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			workspacePath = al.cfg.WorkspacePath()
 		}
 
+		// 从配置加载 MCP 服务器
 		if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, workspacePath); err != nil {
 			logger.WarnCF("agent", "Failed to load MCP servers, MCP tools will not be available",
 				map[string]any{
 					"error": err.Error(),
 				})
 		} else {
-			// Register MCP tools for all agents
+			// 为所有代理注册 MCP 工具
 			servers := mcpManager.GetServers()
 			uniqueTools := 0
 			totalRegistrations := 0
@@ -282,6 +376,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							continue
 						}
 
+						// 创建 MCP 工具并注册到每个代理
 						mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
 						agent.Tools.Register(mcpTool)
 						totalRegistrations++
@@ -305,40 +400,34 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 		}
 	}
 
+	// --- 主消息循环 ---
+	// 持续监听消息总线，处理 inbound 消息
 	for al.running.Load() {
 		select {
 		case <-ctx.Done():
+			// 上下文取消，优雅退出
 			return nil
 		default:
 			msg, ok := al.bus.ConsumeInbound(ctx)
 			if !ok {
+				// 没有消息，继续循环
 				continue
 			}
 
-			// Process message
+			// 处理消息（使用闭包处理 defer 逻辑）
 			func() {
-				// TODO: Re-enable media cleanup after inbound media is properly consumed by the agent.
-				// Currently disabled because files are deleted before the LLM can access their content.
-				// defer func() {
-				// 	if al.mediaStore != nil && msg.MediaScope != "" {
-				// 		if releaseErr := al.mediaStore.ReleaseAll(msg.MediaScope); releaseErr != nil {
-				// 			logger.WarnCF("agent", "Failed to release media", map[string]any{
-				// 				"scope": msg.MediaScope,
-				// 				"error": releaseErr.Error(),
-				// 			})
-				// 		}
-				// 	}
-				// }()
+				// TODO: 重新启用媒体清理功能
+				// 当前禁用的原因是 inbound media 还没被 LLM 消费就被删除了
 
 				response, err := al.processMessage(ctx, msg)
 				if err != nil {
 					response = fmt.Sprintf("Error processing message: %v", err)
 				}
 
+				// 如果有响应，发布到 outbound 消息总线
 				if response != "" {
-					// Check if the message tool already sent a response during this round.
-					// If so, skip publishing to avoid duplicate messages to the user.
-					// Use default agent's tools to check (message tool is shared).
+					// 检查消息工具是否已经在当前 round 发送了响应
+					// 避免重复发送消息给用户
 					alreadySent := false
 					defaultAgent := al.registry.GetDefaultAgent()
 					if defaultAgent != nil {
@@ -350,6 +439,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					}
 
 					if !alreadySent {
+						// 发布 outbound 响应
 						al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 							Channel: msg.Channel,
 							ChatID:  msg.ChatID,
@@ -376,10 +466,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	return nil
 }
 
+// Stop 停止 AgentLoop 的运行循环
+// 通过将 running 标志设为 false 来通知主循环退出
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
 }
 
+// RegisterTool 向所有代理注册一个新工具
+// 参数：
+// - tool: 要实现的工具接口
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	for _, agentID := range al.registry.ListAgentIDs() {
 		if agent, ok := al.registry.GetAgent(agentID); ok {
@@ -388,15 +483,21 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	}
 }
 
+// SetChannelManager 设置渠道管理器
+// 用于管理各个通讯渠道的启停和配置
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
 }
 
-// SetMediaStore injects a MediaStore for media lifecycle management.
+// SetMediaStore 注入 MediaStore 用于媒体文件生命周期管理
+// 媒体文件包括图片、音频、视频等附件
+//
+// 参数：
+// - s: MediaStore 实例，负责媒体文件的存储、解析和清理
 func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
 
-	// Propagate store to send_file tools in all agents.
+	// 传播 store 到所有代理的 send_file 工具
 	al.registry.ForEachTool("send_file", func(t tools.Tool) {
 		if sf, ok := t.(*tools.SendFileTool); ok {
 			sf.SetMediaStore(s)
@@ -404,21 +505,38 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	})
 }
 
-// SetTranscriber injects a voice transcriber for agent-level audio transcription.
+// SetTranscriber 注入语音转写器用于代理级别的音频转录
+// 参数：
+// - t: Transcriber 实例，负责将音频文件转换为文本
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t
 }
 
+// audioAnnotationRe 匹配音频注释的正则表达式
+// 匹配格式：[voice]、[audio]、[voice:xxx]、[audio:xxx] 等
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 
-// transcribeAudioInMessage resolves audio media refs, transcribes them, and
-// replaces audio annotations in msg.Content with the transcribed text.
+// transcribeAudioInMessage 解析音频媒体引用，转写音频内容，
+// 并用转写文本替换 msg.Content 中的音频注释
+//
+// 处理流程：
+// 1. 遍历 msg.Media 中的所有媒体引用
+// 2. 解析每个引用获取文件路径和元数据
+// 3. 对音频文件调用转写器进行语音识别
+// 4. 将音频注释 [voice] 或 [audio] 替换为转写文本
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - msg: 入站消息，包含媒体引用
+//
+// 返回：
+// - 处理后的入站消息（音频注释已替换为文本）
 func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.InboundMessage) bus.InboundMessage {
 	if al.transcriber == nil || al.mediaStore == nil || len(msg.Media) == 0 {
 		return msg
 	}
 
-	// Transcribe each audio media ref in order.
+	// 按顺序转写每个音频媒体引用
 	var transcriptions []string
 	for _, ref := range msg.Media {
 		path, meta, err := al.mediaStore.ResolveWithMeta(ref)
@@ -426,6 +544,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 			logger.WarnCF("voice", "Failed to resolve media ref", map[string]any{"ref": ref, "error": err})
 			continue
 		}
+		// 只转写音频文件，跳过其他类型
 		if !utils.IsAudioFile(meta.Filename, meta.ContentType) {
 			continue
 		}
@@ -442,7 +561,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		return msg
 	}
 
-	// Replace audio annotations sequentially with transcriptions.
+	// 按顺序替换音频注释
 	idx := 0
 	newContent := audioAnnotationRe.ReplaceAllStringFunc(msg.Content, func(match string) string {
 		if idx >= len(transcriptions) {
@@ -453,7 +572,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		return "[voice: " + text + "]"
 	})
 
-	// Append any remaining transcriptions not matched by an annotation.
+	// 追加任何未被注释匹配的剩余转写文本
 	for ; idx < len(transcriptions); idx++ {
 		newContent += "\n[voice: " + transcriptions[idx] + "]"
 	}
@@ -462,12 +581,20 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	return msg
 }
 
-// inferMediaType determines the media type ("image", "audio", "video", "file")
-// from a filename and MIME content type.
+// inferMediaType 根据文件名和 MIME 类型推断媒体类型
+// 支持的类型：image（图片）、audio（音频）、video（视频）、file（其他文件）
+//
+// 参数：
+// - filename: 文件名（包括扩展名）
+// - contentType: MIME 内容类型（如 "image/jpeg"）
+//
+// 返回：
+// - 媒体类型字符串："image"、"audio"、"video" 或 "file"
 func inferMediaType(filename, contentType string) string {
 	ct := strings.ToLower(contentType)
 	fn := strings.ToLower(filename)
 
+	// 首先根据 MIME 类型判断
 	if strings.HasPrefix(ct, "image/") {
 		return "image"
 	}
@@ -478,7 +605,7 @@ func inferMediaType(filename, contentType string) string {
 		return "video"
 	}
 
-	// Fallback: infer from extension
+	// 根据文件扩展名判断（后备逻辑）
 	ext := filepath.Ext(fn)
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg":
@@ -492,8 +619,14 @@ func inferMediaType(filename, contentType string) string {
 	return "file"
 }
 
-// RecordLastChannel records the last active channel for this workspace.
-// This uses the atomic state save mechanism to prevent data loss on crash.
+// RecordLastChannel 记录此工作空间最后活跃的渠道
+// 使用原子状态保存机制防止崩溃时数据丢失
+//
+// 参数：
+// - channel: 渠道标识（格式："channel:chatID"）
+//
+// 返回：
+// - 错误信息（如果有）
 func (al *AgentLoop) RecordLastChannel(channel string) error {
 	if al.state == nil {
 		return nil
@@ -501,8 +634,14 @@ func (al *AgentLoop) RecordLastChannel(channel string) error {
 	return al.state.SetLastChannel(channel)
 }
 
-// RecordLastChatID records the last active chat ID for this workspace.
-// This uses the atomic state save mechanism to prevent data loss on crash.
+// RecordLastChatID 记录此工作空间最后活跃的聊天 ID
+// 使用原子状态保存机制防止崩溃时数据丢失
+//
+// 参数：
+// - chatID: 聊天标识符
+//
+// 返回：
+// - 错误信息（如果有）
 func (al *AgentLoop) RecordLastChatID(chatID string) error {
 	if al.state == nil {
 		return nil
@@ -510,6 +649,17 @@ func (al *AgentLoop) RecordLastChatID(chatID string) error {
 	return al.state.SetLastChatID(chatID)
 }
 
+// ProcessDirect 直接处理一条消息（用于命令行或直接调用）
+// 使用默认渠道 "cli" 和会话 ID "direct"
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - content: 用户消息内容
+// - sessionKey: 会话标识符，用于加载/保存对话历史
+//
+// 返回：
+// - 响应内容字符串
+// - 错误信息（如果有）
 func (al *AgentLoop) ProcessDirect(
 	ctx context.Context,
 	content, sessionKey string,
@@ -517,6 +667,19 @@ func (al *AgentLoop) ProcessDirect(
 	return al.ProcessDirectWithChannel(ctx, content, sessionKey, "cli", "direct")
 }
 
+// ProcessDirectWithChannel 带渠道信息直接处理一条消息
+// 用于定时任务等需要指定渠道的场景
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - content: 用户消息内容
+// - sessionKey: 会话标识符
+// - channel: 渠道名称
+// - chatID: 聊天标识符
+//
+// 返回：
+// - 响应内容字符串
+// - 错误信息（如果有）
 func (al *AgentLoop) ProcessDirectWithChannel(
 	ctx context.Context,
 	content, sessionKey, channel, chatID string,
@@ -532,8 +695,19 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 	return al.processMessage(ctx, msg)
 }
 
-// ProcessHeartbeat processes a heartbeat request without session history.
-// Each heartbeat is independent and doesn't accumulate context.
+// ProcessHeartbeat 处理心跳请求，不加载会话历史
+// 每个心跳请求都是独立的，不累积上下文
+// 用于定期活跃性检查或通知
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - content: 心跳消息内容
+// - channel: 渠道名称
+// - chatID: 聊天标识符
+//
+// 返回：
+// - 响应内容字符串
+// - 错误信息（如果有）
 func (al *AgentLoop) ProcessHeartbeat(
 	ctx context.Context,
 	content, channel, chatID string,
@@ -550,15 +724,35 @@ func (al *AgentLoop) ProcessHeartbeat(
 		DefaultResponse: defaultResponse,
 		EnableSummary:   false,
 		SendResponse:    false,
-		NoHistory:       true, // Don't load session history for heartbeat
+		NoHistory:       true, // 不为心跳请求加载会话历史
 	})
 }
 
+// processMessage 处理入站消息的核心函数
+// 负责消息的路由、转写、命令处理和 LLM 循环执行
+//
+// 处理流程：
+// 1. 记录消息预览到日志（错误消息显示完整内容）
+// 2. 对消息进行音频转写（如果有音频附件）
+// 3. 系统消息路由到 processSystemMessage 处理
+// 4. 解析消息路由，确定处理代理
+// 5. 检查并处理内置命令（/help、/switch 等）
+// 6. 重置消息工具状态避免重复发送
+// 7. 解析会话键
+// 8. 调用 runAgentLoop 执行 LLM 处理
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - msg: 入站消息
+//
+// 返回：
+// - 响应内容字符串
+// - 错误信息（如果有）
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
-	// Add message preview to log (show full content for error messages)
+	// 记录消息预览到日志（错误消息显示完整内容）
 	var logContent string
 	if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
-		logContent = msg.Content // Full content for errors
+		logContent = msg.Content // 错误消息显示完整内容
 	} else {
 		logContent = utils.Truncate(msg.Content, 80)
 	}
@@ -573,19 +767,20 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		},
 	)
 
+	// 对消息进行音频转写（如果有音频附件）
 	msg = al.transcribeAudioInMessage(ctx, msg)
 
-	// Route system messages to processSystemMessage
+	// 系统消息路由到 processSystemMessage 处理
 	if msg.Channel == "system" {
 		return al.processSystemMessage(ctx, msg)
 	}
 
+	// 解析消息路由，确定处理代理
 	route, agent, routeErr := al.resolveMessageRoute(msg)
 
-	// Commands are checked before requiring a successful route.
-	// Global commands (/help, /show, /switch) work even when routing fails;
-	// context-dependent commands check their own Runtime fields and report
-	// "unavailable" when the required capability is nil.
+	// 在路由失败前检查命令
+	// 全局命令（/help、/show、/switch）即使路由失败也能工作
+	// 上下文相关命令检查其 Runtime 字段，在能力为 nil 时报"不可用"
 	if response, handled := al.handleCommand(ctx, msg, agent); handled {
 		return response, nil
 	}
@@ -594,14 +789,14 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return "", routeErr
 	}
 
-	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
+	// 重置消息工具状态，避免上一轮的状态影响本轮发送
 	if tool, ok := agent.Tools.Get("message"); ok {
 		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
 			resetter.ResetSentInRound()
 		}
 	}
 
-	// Resolve session key from route, while preserving explicit agent-scoped keys.
+	// 从路由解析会话键，同时保留显式的代理作用域键
 	scopeKey := resolveScopeKey(route, msg.SessionKey)
 	sessionKey := scopeKey
 
@@ -627,6 +822,16 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	})
 }
 
+// resolveMessageRoute 解析消息的路由，确定处理代理
+// 根据消息的渠道、账户 ID、对等方信息等匹配绑定的代理
+//
+// 参数：
+// - msg: 入站消息
+//
+// 返回：
+// - 解析的路由信息
+// - 代理实例
+// - 错误信息（如果有）
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	route := al.registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
@@ -637,6 +842,7 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		TeamID:     inboundMetadata(msg, metadataKeyTeamID),
 	})
 
+	// 获取路由对应的代理，如果没有则使用默认代理
 	agent, ok := al.registry.GetAgent(route.AgentID)
 	if !ok {
 		agent = al.registry.GetDefaultAgent()
@@ -648,6 +854,9 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	return route, agent, nil
 }
 
+// resolveScopeKey 解析会话键，保留显式的代理作用域键
+// 如果消息已经包含 agent: 前缀的会话键，则保持不变
+// 否则使用路由生成的会话键
 func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 	if msgSessionKey != "" && strings.HasPrefix(msgSessionKey, sessionKeyAgentPrefix) {
 		return msgSessionKey
@@ -655,6 +864,23 @@ func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 	return route.SessionKey
 }
 
+// processSystemMessage 处理系统消息
+// 系统消息通常来自子代理任务完成通知或其他后台任务
+//
+// 处理流程：
+// 1. 验证消息渠道是否为 "system"
+// 2. 解析原始渠道和聊天 ID（从 chat_id 字段）
+// 3. 提取子代理结果（去掉任务完成前缀）
+// 4. 跳过内部渠道（不发送给用户）
+// 5. 使用默认代理处理并发送响应
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - msg: 入站系统消息
+//
+// 返回：
+// - 响应内容字符串
+// - 错误信息（如果有）
 func (al *AgentLoop) processSystemMessage(
 	ctx context.Context,
 	msg bus.InboundMessage,
@@ -672,7 +898,7 @@ func (al *AgentLoop) processSystemMessage(
 			"chat_id":   msg.ChatID,
 		})
 
-	// Parse origin channel from chat_id (format: "channel:chat_id")
+	// 从 chat_id 解析原始渠道（格式："channel:chat_id"）
 	var originChannel, originChatID string
 	if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
 		originChannel = msg.ChatID[:idx]
@@ -682,14 +908,14 @@ func (al *AgentLoop) processSystemMessage(
 		originChatID = msg.ChatID
 	}
 
-	// Extract subagent result from message content
-	// Format: "Task 'label' completed.\n\nResult:\n<actual content>"
+	// 从消息内容提取子代理结果
+	// 格式："Task 'label' completed.\n\nResult:\n<actual content>"
 	content := msg.Content
 	if idx := strings.Index(content, "Result:\n"); idx >= 0 {
-		content = content[idx+8:] // Extract just the result part
+		content = content[idx+8:] // 只提取结果部分
 	}
 
-	// Skip internal channels - only log, don't send to user
+	// 跳过内部渠道 - 只记录不发送给用户
 	if constants.IsInternalChannel(originChannel) {
 		logger.InfoCF("agent", "Subagent completed (internal channel)",
 			map[string]any{
@@ -700,13 +926,13 @@ func (al *AgentLoop) processSystemMessage(
 		return "", nil
 	}
 
-	// Use default agent for system messages
+	// 使用默认代理处理系统消息
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
 		return "", fmt.Errorf("no default agent for system message")
 	}
 
-	// Use the origin session for context
+	// 使用原始会话作为上下文
 	sessionKey := routing.BuildAgentMainSessionKey(agent.ID)
 
 	return al.runAgentLoop(ctx, agent, processOptions{
@@ -720,15 +946,35 @@ func (al *AgentLoop) processSystemMessage(
 	})
 }
 
-// runAgentLoop is the core message processing logic.
+// runAgentLoop 是核心消息处理逻辑
+// 执行完整的 AI 代理处理流程，包括：
+// 1. 记录最后渠道（用于心跳通知）
+// 2. 构建消息（加载历史、摘要、上下文）
+// 3. 解析媒体引用
+// 4. 保存用户消息到会话
+// 5. 运行 LLM 迭代循环
+// 6. 处理空响应
+// 7. 保存助理消息到会话
+// 8. 可选的会话摘要
+// 9. 可选的发送响应
+// 10. 日志记录
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - agent: 代理实例
+// - opts: 处理选项配置
+//
+// 返回：
+// - 最终响应内容
+// - 错误信息（如果有）
 func (al *AgentLoop) runAgentLoop(
 	ctx context.Context,
 	agent *AgentInstance,
 	opts processOptions,
 ) (string, error) {
-	// 0. Record last channel for heartbeat notifications (skip internal channels)
+	// 步骤 0: 记录最后活跃渠道（用于心跳通知），跳过内部渠道
 	if opts.Channel != "" && opts.ChatID != "" {
-		// Don't record internal channels (cli, system, subagent)
+		// 不记录内部渠道（cli、system、subagent）
 		if !constants.IsInternalChannel(opts.Channel) {
 			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
 			if err := al.RecordLastChannel(channelKey); err != nil {
@@ -741,7 +987,7 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
-	// 1. Build messages (skip history for heartbeat)
+	// 步骤 1: 构建消息（心跳请求跳过历史加载）
 	var history []providers.Message
 	var summary string
 	if !opts.NoHistory {
@@ -757,37 +1003,37 @@ func (al *AgentLoop) runAgentLoop(
 		opts.ChatID,
 	)
 
-	// Resolve media:// refs to base64 data URLs (streaming)
+	// 将 media:// 引用解析为 base64 数据 URL（用于流式传输）
 	maxMediaSize := al.cfg.Agents.Defaults.GetMaxMediaSize()
 	messages = resolveMediaRefs(messages, al.mediaStore, maxMediaSize)
 
-	// 2. Save user message to session
+	// 步骤 2: 保存用户消息到会话
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
-	// 3. Run LLM iteration loop
+	// 步骤 3: 运行 LLM 迭代循环
 	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
 	}
 
-	// If last tool had ForUser content and we already sent it, we might not need to send final response
-	// This is controlled by the tool's Silent flag and ForUser content
+	// 如果最后一个工具有 ForUser 内容且已发送，可能不需要发送最终响应
+	// 这由工具的 Silent 标志和 ForUser 内容控制
 
-	// 4. Handle empty response
+	// 步骤 4: 处理空响应
 	if finalContent == "" {
 		finalContent = opts.DefaultResponse
 	}
 
-	// 5. Save final assistant message to session
+	// 步骤 5: 保存最终助理消息到会话
 	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
 	agent.Sessions.Save(opts.SessionKey)
 
-	// 6. Optional: summarization
+	// 步骤 6: 可选的会话摘要
 	if opts.EnableSummary {
 		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
-	// 7. Optional: send response via bus
+	// 步骤 7: 可选的通过消息总线发送响应
 	if opts.SendResponse {
 		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
@@ -796,7 +1042,7 @@ func (al *AgentLoop) runAgentLoop(
 		})
 	}
 
-	// 8. Log response
+	// 步骤 8: 记录响应日志
 	responsePreview := utils.Truncate(finalContent, 120)
 	logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview),
 		map[string]any{
@@ -809,6 +1055,14 @@ func (al *AgentLoop) runAgentLoop(
 	return finalContent, nil
 }
 
+// targetReasoningChannelID 获取指定渠道的推理渠道 ID
+// 推理渠道用于发送 LLM 的思考过程（如果支持）
+//
+// 参数：
+// - channelName: 渠道名称
+//
+// 返回：
+// - 推理渠道 ID，如果渠道管理器未初始化或渠道不存在则返回空字符串
 func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string) {
 	if al.channelManager == nil {
 		return ""
@@ -819,6 +1073,15 @@ func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string
 	return ""
 }
 
+// handleReasoning 处理 LLM 推理内容的发送
+// 将 LLM 的思考过程发送到指定的推理渠道
+// 这是一个最佳努力的操作，如果总线满或上下文取消会丢弃
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - reasoningContent: 推理内容
+// - channelName: 渠道名称
+// - channelID: 渠道 ID
 func (al *AgentLoop) handleReasoning(
 	ctx context.Context,
 	reasoningContent, channelName, channelID string,
@@ -827,15 +1090,14 @@ func (al *AgentLoop) handleReasoning(
 		return
 	}
 
-	// Check context cancellation before attempting to publish,
-	// since PublishOutbound's select may race between send and ctx.Done().
+	// 在尝试发布前检查上下文取消
+	// 因为 PublishOutbound 的 select 可能在发送和 ctx.Done() 之间有竞争
 	if ctx.Err() != nil {
 		return
 	}
 
-	// Use a short timeout so the goroutine does not block indefinitely when
-	// the outbound bus is full.  Reasoning output is best-effort; dropping it
-	// is acceptable to avoid goroutine accumulation.
+	// 使用短超时防止 goroutine 在 outbound 总线满时无限阻塞
+	// 推理输出是最佳努力的，丢弃它可以接受以避免 goroutine 堆积
 	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pubCancel()
 
@@ -844,12 +1106,10 @@ func (al *AgentLoop) handleReasoning(
 		ChatID:  channelID,
 		Content: reasoningContent,
 	}); err != nil {
-		// Treat context.DeadlineExceeded / context.Canceled as expected
-		// (bus full under load, or parent canceled).  Check the error
-		// itself rather than ctx.Err(), because pubCtx may time out
-		// (5 s) while the parent ctx is still active.
-		// Also treat ErrBusClosed as expected — it occurs during normal
-		// shutdown when the bus is closed before all goroutines finish.
+		// 将 context.DeadlineExceeded / context.Canceled 视为预期错误
+		// （总线满或父上下文取消）
+		// 检查错误本身而不是 ctx.Err()，因为 pubCtx 可能超时（5 秒）而父上下文仍活跃
+		// ErrBusClosed 也视为预期错误 —— 正常关闭时总线可能在所有 goroutine 完成前关闭
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 			errors.Is(err, bus.ErrBusClosed) {
 			logger.DebugCF("agent", "Reasoning publish skipped (timeout/cancel)", map[string]any{
