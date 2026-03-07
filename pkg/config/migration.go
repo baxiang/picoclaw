@@ -3,6 +3,9 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package config 提供配置管理功能
+// 本文件包含配置迁移逻辑，用于将旧版 ProvidersConfig 转换为新的 ModelList 格式
+
 package config
 
 import (
@@ -10,36 +13,50 @@ import (
 	"strings"
 )
 
-// buildModelWithProtocol constructs a model string with protocol prefix.
-// If the model already contains a "/" (indicating it has a protocol prefix), it is returned as-is.
-// Otherwise, the protocol prefix is added.
+// buildModelWithProtocol 构建带协议前缀的模型字符串
+// 如果模型已包含 "/"（表示已有协议前缀），则原样返回
+// 否则添加协议前缀
+//
+// 参数：
+// - protocol: 协议名称（如 "openai"、"anthropic"）
+// - model: 模型标识符（如 "gpt-4"、"claude-sonnet-4.6"）
+//
+// 返回：
+// - string: 带协议前缀的模型字符串（如 "openai/gpt-4"）
 func buildModelWithProtocol(protocol, model string) string {
 	if strings.Contains(model, "/") {
-		// Model already has a protocol prefix, return as-is
+		// 模型已有协议前缀，原样返回
 		return model
 	}
 	return protocol + "/" + model
 }
 
-// providerMigrationConfig defines how to migrate a provider from old config to new format.
+// providerMigrationConfig 提供商迁移配置
+// 定义如何将旧版 ProviderConfig 转换为新的 ModelConfig 格式
 type providerMigrationConfig struct {
-	// providerNames are the possible names used in agents.defaults.provider
+	// providerNames 是在 agents.defaults.provider 中可能使用的名称列表
 	providerNames []string
-	// protocol is the protocol prefix for the model field
+	// protocol 是模型字段的协议前缀
 	protocol string
-	// buildConfig creates the ModelConfig from ProviderConfig
+	// buildConfig 从 ProviderConfig 创建 ModelConfig 的函数
 	buildConfig func(p ProvidersConfig) (ModelConfig, bool)
 }
 
-// ConvertProvidersToModelList converts the old ProvidersConfig to a slice of ModelConfig.
-// This enables backward compatibility with existing configurations.
-// It preserves the user's configured model from agents.defaults.model when possible.
+// ConvertProvidersToModelList 将旧版 ProvidersConfig 转换为 ModelConfig 切片
+// 用于向后兼容旧配置
+// 它会尽可能保留用户在 agents.defaults.model 中配置的模型
+//
+// 参数：
+// - cfg: 原始配置指针
+//
+// 返回：
+// - []ModelConfig: 转换后的模型配置列表
 func ConvertProvidersToModelList(cfg *Config) []ModelConfig {
 	if cfg == nil {
 		return nil
 	}
 
-	// Get user's configured provider and model
+	// 获取用户配置的提供商和模型
 	userProvider := strings.ToLower(cfg.Agents.Defaults.Provider)
 	userModel := cfg.Agents.Defaults.GetModelName()
 
@@ -47,10 +64,10 @@ func ConvertProvidersToModelList(cfg *Config) []ModelConfig {
 
 	var result []ModelConfig
 
-	// Track if we've applied the legacy model name fix (only for first provider)
+	// 跟踪是否已应用旧版模型名称修复（仅用于第一个提供商）
 	legacyModelNameApplied := false
 
-	// Define migration rules for each provider
+	// 为每个提供商定义迁移规则
 	migrations := []providerMigrationConfig{
 		{
 			providerNames: []string{"openai", "gpt"},
@@ -392,21 +409,21 @@ func ConvertProvidersToModelList(cfg *Config) []ModelConfig {
 		},
 	}
 
-	// Process each provider migration
+	// 处理每个提供商迁移
 	for _, m := range migrations {
 		mc, ok := m.buildConfig(p)
 		if !ok {
 			continue
 		}
 
-		// Check if this is the user's configured provider
+		// 检查这是否为用户配置的提供商
 		if slices.Contains(m.providerNames, userProvider) && userModel != "" {
-			// Use the user's configured model instead of default
+			// 使用户配置的模型而不是默认模型
 			mc.Model = buildModelWithProtocol(m.protocol, userModel)
 		} else if userProvider == "" && userModel != "" && !legacyModelNameApplied {
-			// Legacy config: no explicit provider field but model is specified
-			// Use userModel as ModelName for the FIRST provider so GetModelConfig(model) can find it
-			// This maintains backward compatibility with old configs that relied on implicit provider selection
+			// 旧版配置：没有明确的 provider 字段但指定了 model
+			// 为第一个提供商使用 userModel 作为 ModelName，这样 GetModelConfig(model) 可以找到它
+			// 这保持了与依赖隐式提供商选择的旧配置的向后兼容性
 			mc.ModelName = userModel
 			mc.Model = buildModelWithProtocol(m.protocol, userModel)
 			legacyModelNameApplied = true

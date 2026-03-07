@@ -1,3 +1,6 @@
+// Package memory 提供记忆存储功能
+// 本文件包含从旧版 JSON 格式迁移会话的功能
+
 package memory
 
 import (
@@ -13,21 +16,31 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-// jsonSession mirrors pkg/session.Session for migration purposes.
+// jsonSession JSON 会话结构
+// 镜像 pkg/session.Session 用于迁移目的
 type jsonSession struct {
-	Key      string              `json:"key"`
-	Messages []providers.Message `json:"messages"`
-	Summary  string              `json:"summary,omitempty"`
-	Created  time.Time           `json:"created"`
-	Updated  time.Time           `json:"updated"`
+	Key      string              `json:"key"`        // 会话标识符
+	Messages []providers.Message `json:"messages"`   // 消息列表
+	Summary  string              `json:"summary,omitempty"` // 会话摘要
+	Created  time.Time           `json:"created"`    // 创建时间
+	Updated  time.Time           `json:"updated"`    // 最后更新时间
 }
 
-// MigrateFromJSON reads legacy sessions/*.json files from sessionsDir,
-// writes them into the Store, and renames each migrated file to
-// .json.migrated as a backup. Returns the number of sessions migrated.
+// MigrateFromJSON 从旧版 sessions/*.json 文件迁移会话到 Store
+// 读取 sessionsDir 中的 JSON 文件，写入 Store，并将每个已迁移的文件重命名为
+// .json.migrated 作为备份。返回迁移的会话数量。
 //
-// Files that fail to parse are logged and skipped. Already-migrated
-// files (.json.migrated) are ignored, making the function idempotent.
+// 解析失败的文件会被记录并跳过。
+// 已迁移的文件（.json.migrated）会被忽略，使此函数具有幂等性。
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - sessionsDir: 旧版会话文件目录
+// - store: 目标存储接口
+//
+// 返回：
+// - int: 迁移的会话数量
+// - error: 迁移错误
 func MigrateFromJSON(
 	ctx context.Context, sessionsDir string, store Store,
 ) (int, error) {
@@ -48,7 +61,7 @@ func MigrateFromJSON(
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		// Skip already-migrated files.
+		// 跳过已迁移的文件
 		if strings.HasSuffix(name, ".migrated") {
 			continue
 		}
@@ -67,18 +80,17 @@ func MigrateFromJSON(
 			continue
 		}
 
-		// Use the key from the JSON content, not the filename.
-		// Filenames are sanitized (":" → "_") but keys are not.
+		// 使用 JSON 内容中的 key，而不是文件名
+		// 文件名已被清理（":" → "_"），但 key 不是
 		key := sess.Key
 		if key == "" {
 			key = strings.TrimSuffix(name, ".json")
 		}
 
-		// Use SetHistory (atomic replace) instead of per-message
-		// AddFullMessage. This makes migration idempotent: if the
-		// process crashes after writing messages but before the
-		// rename below, a retry replaces the partial data cleanly
-		// instead of duplicating messages.
+		// 使用 SetHistory（原子替换）而不是逐个消息的
+		// AddFullMessage。这使得迁移具有幂等性：如果在写入消息后但
+		// 在下面的重命名之前进程崩溃，重试会替换部分数据而不会
+		// 重复消息
 		if setErr := store.SetHistory(ctx, key, sess.Messages); setErr != nil {
 			return migrated, fmt.Errorf(
 				"memory: migrate %s: set history: %w",
@@ -95,7 +107,7 @@ func MigrateFromJSON(
 			}
 		}
 
-		// Rename to .migrated as backup (not delete).
+		// 重命名为 .migrated 作为备份（不删除）
 		renameErr := os.Rename(srcPath, srcPath+".migrated")
 		if renameErr != nil {
 			log.Printf("memory: migrate: rename %s: %v", name, renameErr)

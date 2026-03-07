@@ -4,6 +4,14 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package channels 提供通讯渠道功能
+// 本文件包含渠道管理器实现
+// 负责：
+// - 渠道初始化和启动/停止
+// - 消息路由和速率限制
+// - HTTP 服务器和 Webhook 处理
+// - 占位符消息和输入指示器管理
+
 package channels
 
 import (
@@ -26,120 +34,139 @@ import (
 )
 
 const (
-	defaultChannelQueueSize = 16
-	defaultRateLimit        = 10 // default 10 msg/s
-	maxRetries              = 3
-	rateLimitDelay          = 1 * time.Second
-	baseBackoff             = 500 * time.Millisecond
-	maxBackoff              = 8 * time.Second
+	defaultChannelQueueSize = 16                 // 默认渠道队列大小（16 条消息）
+	defaultRateLimit        = 10                 // 默认速率限制（10 条消息/秒）
+	maxRetries              = 3                  // 最大重试次数
+	rateLimitDelay          = 1 * time.Second    // 速率限制延迟
+	baseBackoff             = 500 * time.Millisecond // 基础退避时间
+	maxBackoff              = 8 * time.Second    // 最大退避时间
 
-	janitorInterval = 10 * time.Second
-	typingStopTTL   = 5 * time.Minute
-	placeholderTTL  = 10 * time.Minute
+	janitorInterval = 10 * time.Second // 清理器运行间隔
+	typingStopTTL   = 5 * time.Minute  // 输入指示器停止函数 TTL
+	placeholderTTL  = 10 * time.Minute // 占位符消息 TTL
 )
 
-// typingEntry wraps a typing stop function with a creation timestamp for TTL eviction.
+// typingEntry 输入指示器条目
+// 包含停止函数和创建时间戳用于 TTL 驱逐
 type typingEntry struct {
-	stop      func()
-	createdAt time.Time
+	stop      func()      // 停止输入指示器的函数
+	createdAt time.Time   // 创建时间
 }
 
-// reactionEntry wraps a reaction undo function with a creation timestamp for TTL eviction.
+// reactionEntry 消息反应条目
+// 包含反应撤销函数和创建时间戳用于 TTL 驱逐
 type reactionEntry struct {
-	undo      func()
-	createdAt time.Time
+	undo      func()      // 撤销反应的函数
+	createdAt time.Time   // 创建时间
 }
 
-// placeholderEntry wraps a placeholder ID with a creation timestamp for TTL eviction.
+// placeholderEntry 占位符条目
+// 包含占位符消息 ID 和创建时间戳用于 TTL 驱逐
 type placeholderEntry struct {
-	id        string
-	createdAt time.Time
+	id        string      // 占位符消息 ID
+	createdAt time.Time   // 创建时间
 }
 
-// channelRateConfig maps channel name to per-second rate limit.
+// channelRateConfig 渠道速率限制配置
+// 映射渠道名称到每秒速率限制
 var channelRateConfig = map[string]float64{
-	"telegram": 20,
-	"discord":  1,
-	"slack":    1,
-	"line":     10,
+	"telegram": 20, // Telegram 20 条/秒
+	"discord":  1,  // Discord 1 条/秒
+	"slack":    1,  // Slack 1 条/秒
+	"line":     10, // LINE 10 条/秒
 }
 
+// channelWorker 渠道工作者
+// 负责处理单个渠道的消息发送，带速率限制
 type channelWorker struct {
-	ch         Channel
-	queue      chan bus.OutboundMessage
-	mediaQueue chan bus.OutboundMediaMessage
-	done       chan struct{}
-	mediaDone  chan struct{}
-	limiter    *rate.Limiter
+	ch         Channel          // 渠道实例
+	queue      chan bus.OutboundMessage        // 消息队列
+	mediaQueue chan bus.OutboundMediaMessage   // 媒体消息队列
+	done       chan struct{}    // 完成信号
+	mediaDone  chan struct{}    // 媒体完成信号
+	limiter    *rate.Limiter    // 速率限制器
 }
 
+// Manager 渠道管理器
+// 管理所有通讯渠道的生命周期和消息路由
 type Manager struct {
-	channels      map[string]Channel
-	workers       map[string]*channelWorker
-	bus           *bus.MessageBus
-	config        *config.Config
-	mediaStore    media.MediaStore
-	dispatchTask  *asyncTask
-	mux           *http.ServeMux
-	httpServer    *http.Server
-	mu            sync.RWMutex
-	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
-	typingStops   sync.Map // "channel:chatID" → func()
-	reactionUndos sync.Map // "channel:chatID" → reactionEntry
+	channels      map[string]Channel           // 渠道映射表
+	workers       map[string]*channelWorker    // 工作者映射表
+	bus           *bus.MessageBus              // 消息总线
+	config        *config.Config               // 配置
+	mediaStore    media.MediaStore             // 媒体存储
+	dispatchTask  *asyncTask                   // 调度任务
+	mux           *http.ServeMux               // HTTP 多路复用器
+	httpServer    *http.Server                 // HTTP 服务器
+	mu            sync.RWMutex                 // 读写锁
+	placeholders  sync.Map // "channel:chatID" → placeholderEntry (占位符)
+	typingStops   sync.Map // "channel:chatID" → typingEntry (输入指示器)
+	reactionUndos sync.Map // "channel:chatID" → reactionEntry (消息反应)
 }
 
+// asyncTask 异步任务
+// 用于管理后台 goroutine 的取消
 type asyncTask struct {
-	cancel context.CancelFunc
+	cancel context.CancelFunc  // 取消函数
 }
 
-// RecordPlaceholder registers a placeholder message for later editing.
-// Implements PlaceholderRecorder.
+// RecordPlaceholder 记录占位符消息用于后续编辑
+// 实现 PlaceholderRecorder 接口
 func (m *Manager) RecordPlaceholder(channel, chatID, placeholderID string) {
 	key := channel + ":" + chatID
 	m.placeholders.Store(key, placeholderEntry{id: placeholderID, createdAt: time.Now()})
 }
 
-// RecordTypingStop registers a typing stop function for later invocation.
-// Implements PlaceholderRecorder.
+// RecordTypingStop 记录输入指示器停止函数用于后续调用
+// 实现 PlaceholderRecorder 接口
 func (m *Manager) RecordTypingStop(channel, chatID string, stop func()) {
 	key := channel + ":" + chatID
 	m.typingStops.Store(key, typingEntry{stop: stop, createdAt: time.Now()})
 }
 
-// RecordReactionUndo registers a reaction undo function for later invocation.
-// Implements PlaceholderRecorder.
+// RecordReactionUndo 记录反应撤销函数用于后续调用
+// 实现 PlaceholderRecorder 接口
 func (m *Manager) RecordReactionUndo(channel, chatID string, undo func()) {
 	key := channel + ":" + chatID
 	m.reactionUndos.Store(key, reactionEntry{undo: undo, createdAt: time.Now()})
 }
 
-// preSend handles typing stop, reaction undo, and placeholder editing before sending a message.
-// Returns true if the message was edited into a placeholder (skip Send).
+// preSend 在发送消息前处理输入指示器停止、反应撤销和占位符编辑
+// 返回 true 表示消息已编辑到占位符（跳过 Send）
+//
+// 参数：
+// - ctx: 上下文
+// - name: 渠道名称
+// - msg: 出站消息
+// - ch: 渠道实例
+//
+// 返回：
+// - bool: 是否已编辑占位符（跳过发送）
 func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMessage, ch Channel) bool {
 	key := name + ":" + msg.ChatID
 
-	// 1. Stop typing
+	// 1. 停止输入指示器
 	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
 		if entry, ok := v.(typingEntry); ok {
-			entry.stop() // idempotent, safe
+			entry.stop() // 幂等，安全
 		}
 	}
 
-	// 2. Undo reaction
+	// 2. 撤销消息反应
 	if v, loaded := m.reactionUndos.LoadAndDelete(key); loaded {
 		if entry, ok := v.(reactionEntry); ok {
-			entry.undo() // idempotent, safe
+			entry.undo() // 幂等，安全
 		}
 	}
 
-	// 3. Try editing placeholder
+	// 3. 尝试编辑占位符
 	if v, loaded := m.placeholders.LoadAndDelete(key); loaded {
 		if entry, ok := v.(placeholderEntry); ok && entry.id != "" {
 			if editor, ok := ch.(MessageEditor); ok {
 				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
-					return true // edited successfully, skip Send
+					return true // 编辑成功，跳过发送
 				}
-				// edit failed → fall through to normal Send
+				// 编辑失败 → 回退到正常发送
 			}
 		}
 	}
@@ -147,6 +174,16 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 	return false
 }
 
+// NewManager 创建渠道管理器
+//
+// 参数：
+// - cfg: 配置对象
+// - messageBus: 消息总线
+// - store: 媒体存储
+//
+// 返回：
+// - *Manager: 渠道管理器指针
+// - error: 创建错误
 func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.MediaStore) (*Manager, error) {
 	m := &Manager{
 		channels:   make(map[string]Channel),
@@ -163,7 +200,12 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 	return m, nil
 }
 
-// initChannel is a helper that looks up a factory by name and creates the channel.
+// initChannel 初始化单个渠道的辅助函数
+// 按名称查找工厂函数并创建渠道
+//
+// 参数：
+// - name: 渠道名称（如 "telegram"）
+// - displayName: 渠道显示名称（如 "Telegram"）
 func (m *Manager) initChannel(name, displayName string) {
 	f, ok := getFactory(name)
 	if !ok {
@@ -182,17 +224,17 @@ func (m *Manager) initChannel(name, displayName string) {
 			"error":   err.Error(),
 		})
 	} else {
-		// Inject MediaStore if channel supports it
+		// 如果渠道支持，注入 MediaStore
 		if m.mediaStore != nil {
 			if setter, ok := ch.(interface{ SetMediaStore(s media.MediaStore) }); ok {
 				setter.SetMediaStore(m.mediaStore)
 			}
 		}
-		// Inject PlaceholderRecorder if channel supports it
+		// 如果渠道支持，注入 PlaceholderRecorder
 		if setter, ok := ch.(interface{ SetPlaceholderRecorder(r PlaceholderRecorder) }); ok {
 			setter.SetPlaceholderRecorder(m)
 		}
-		// Inject owner reference so BaseChannel.HandleMessage can auto-trigger typing/reaction
+		// 注入 owner 引用，以便 BaseChannel.HandleMessage 自动触发输入/反应
 		if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
 			setter.SetOwner(ch)
 		}
@@ -203,6 +245,11 @@ func (m *Manager) initChannel(name, displayName string) {
 	}
 }
 
+// initChannels 初始化所有启用的渠道
+// 遍历配置中的 Channels，为每个启用的渠道调用 initChannel
+//
+// 返回：
+// - error: 初始化错误
 func (m *Manager) initChannels() error {
 	logger.InfoC("channels", "Initializing channel manager")
 
@@ -274,18 +321,21 @@ func (m *Manager) initChannels() error {
 	return nil
 }
 
-// SetupHTTPServer creates a shared HTTP server with the given listen address.
-// It registers health endpoints from the health server and discovers channels
-// that implement WebhookHandler and/or HealthChecker to register their handlers.
+// SetupHTTPServer 创建共享 HTTP 服务器
+// 注册健康检查端点，并发现实现 WebhookHandler 和/或 HealthChecker 的渠道来注册它们的处理程序
+//
+// 参数：
+// - addr: HTTP 服务器监听地址
+// - healthServer: 健康检查服务器
 func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	m.mux = http.NewServeMux()
 
-	// Register health endpoints
+	// 注册健康检查端点
 	if healthServer != nil {
 		healthServer.RegisterOnMux(m.mux)
 	}
 
-	// Discover and register webhook handlers and health checkers
+	// 发现并注册 Webhook 处理程序和健康检查端点
 	for name, ch := range m.channels {
 		if wh, ok := ch.(WebhookHandler); ok {
 			m.mux.Handle(wh.WebhookPath(), wh)
@@ -311,6 +361,14 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	}
 }
 
+// StartAll 启动所有渠道
+// 为每个渠道创建工作者并启动消息调度
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+//
+// 返回：
+// - error: 启动错误
 func (m *Manager) StartAll(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -336,21 +394,21 @@ func (m *Manager) StartAll(ctx context.Context) error {
 			})
 			continue
 		}
-		// Lazily create worker only after channel starts successfully
+		// 仅在渠道成功启动后懒创建工作者
 		w := newChannelWorker(name, channel)
 		m.workers[name] = w
 		go m.runWorker(dispatchCtx, name, w)
 		go m.runMediaWorker(dispatchCtx, name, w)
 	}
 
-	// Start the dispatcher that reads from the bus and routes to workers
+	// 启动从消息总线读取并路由到工作者的调度器
 	go m.dispatchOutbound(dispatchCtx)
 	go m.dispatchOutboundMedia(dispatchCtx)
 
-	// Start the TTL janitor that cleans up stale typing/placeholder entries
+	// 启动 TTL 清理器以清理过时的输入/占位符条目
 	go m.runTTLJanitor(dispatchCtx)
 
-	// Start shared HTTP server if configured
+	// 如果配置了，启动共享 HTTP 服务器
 	if m.httpServer != nil {
 		go func() {
 			logger.InfoCF("channels", "Shared HTTP server listening", map[string]any{
@@ -368,13 +426,21 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	return nil
 }
 
+// StopAll 停止所有渠道
+// 关闭 HTTP 服务器、取消调度器、等待工作者排空
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+//
+// 返回：
+// - error: 停止错误
 func (m *Manager) StopAll(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	logger.InfoC("channels", "Stopping all channels")
 
-	// Shutdown shared HTTP server first
+	// 首先关闭共享 HTTP 服务器
 	if m.httpServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -386,13 +452,13 @@ func (m *Manager) StopAll(ctx context.Context) error {
 		m.httpServer = nil
 	}
 
-	// Cancel dispatcher
+	// 取消调度器
 	if m.dispatchTask != nil {
 		m.dispatchTask.cancel()
 		m.dispatchTask = nil
 	}
 
-	// Close all worker queues and wait for them to drain
+	// 关闭所有工作者队列并等待排空
 	for _, w := range m.workers {
 		if w != nil {
 			close(w.queue)
@@ -403,7 +469,7 @@ func (m *Manager) StopAll(ctx context.Context) error {
 			<-w.done
 		}
 	}
-	// Close all media worker queues and wait for them to drain
+	// 关闭所有媒体工作者队列并等待排空
 	for _, w := range m.workers {
 		if w != nil {
 			close(w.mediaQueue)
@@ -415,7 +481,7 @@ func (m *Manager) StopAll(ctx context.Context) error {
 		}
 	}
 
-	// Stop all channels
+	// 停止所有渠道
 	for name, channel := range m.channels {
 		logger.InfoCF("channels", "Stopping channel", map[string]any{
 			"channel": name,
@@ -432,8 +498,14 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	return nil
 }
 
-// newChannelWorker creates a channelWorker with a rate limiter configured
-// for the given channel name.
+// newChannelWorker 创建带速率限制器的渠道工作者
+//
+// 参数：
+// - name: 渠道名称
+// - ch: 渠道实例
+//
+// 返回：
+// - *channelWorker: 渠道工作者指针
 func newChannelWorker(name string, ch Channel) *channelWorker {
 	rateVal := float64(defaultRateLimit)
 	if r, ok := channelRateConfig[name]; ok {
@@ -451,8 +523,13 @@ func newChannelWorker(name string, ch Channel) *channelWorker {
 	}
 }
 
-// runWorker processes outbound messages for a single channel, splitting
-// messages that exceed the channel's maximum message length.
+// runWorker 处理单个渠道的出站消息
+// 分割超过渠道最大消息长度的消息
+//
+// 参数：
+// - ctx: 上下文
+// - name: 渠道名称
+// - w: 渠道工作者
 func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) {
 	defer close(w.done)
 	for {
@@ -481,21 +558,27 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 	}
 }
 
-// sendWithRetry sends a message through the channel with rate limiting and
-// retry logic. It classifies errors to determine the retry strategy:
-//   - ErrNotRunning / ErrSendFailed: permanent, no retry
-//   - ErrRateLimit: fixed delay retry
-//   - ErrTemporary / unknown: exponential backoff retry
+// sendWithRetry 通过渠道发送消息，带速率限制和重试逻辑
+// 分类错误以确定重试策略：
+//   - ErrNotRunning / ErrSendFailed: 永久性错误，不重试
+//   - ErrRateLimit: 固定延迟重试
+//   - ErrTemporary / 未知错误：指数退避重试
+//
+// 参数：
+// - ctx: 上下文
+// - name: 渠道名称
+// - w: 渠道工作者
+// - msg: 出站消息
 func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) {
-	// Rate limit: wait for token
+	// 速率限制：等待令牌
 	if err := w.limiter.Wait(ctx); err != nil {
-		// ctx canceled, shutting down
+		// 上下文取消，正在关闭
 		return
 	}
 
-	// Pre-send: stop typing and try to edit placeholder
+	// 预发送：停止输入指示器并尝试编辑占位符
 	if m.preSend(ctx, name, msg, w.ch) {
-		return // placeholder was edited successfully, skip Send
+		return // 占位符已成功编辑，跳过发送
 	}
 
 	var lastErr error
@@ -505,17 +588,17 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 			return
 		}
 
-		// Permanent failures — don't retry
+		// 永久性错误 — 不重试
 		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
 			break
 		}
 
-		// Last attempt exhausted — don't sleep
+		// 重试次数已用尽 — 不睡眠
 		if attempt == maxRetries {
 			break
 		}
 
-		// Rate limit error — fixed delay
+		// 速率限制错误 — 固定延迟
 		if errors.Is(lastErr, ErrRateLimit) {
 			select {
 			case <-time.After(rateLimitDelay):
@@ -525,7 +608,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 			}
 		}
 
-		// ErrTemporary or unknown error — exponential backoff
+		// ErrTemporary 或未知错误 — 指数退避
 		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
 		select {
 		case <-time.After(backoff):
@@ -534,7 +617,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		}
 	}
 
-	// All retries exhausted or permanent failure
+	// 重试耗尽或永久性失败
 	logger.ErrorCF("channels", "Send failed", map[string]any{
 		"channel": name,
 		"chat_id": msg.ChatID,
@@ -543,6 +626,19 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 	})
 }
 
+// dispatchLoop 通用调度循环
+// 从消息总线订阅消息并路由到对应渠道的工作者
+//
+// 参数：
+// - ctx: 上下文
+// - m: 渠道管理器
+// - subscribe: 订阅函数
+// - getChannel: 获取渠道名称的函数
+// - enqueue: 入队函数
+// - startMsg: 启动日志消息
+// - stopMsg: 停止日志消息
+// - unknownMsg: 未知渠道日志消息
+// - noWorkerMsg: 无工作者日志消息
 func dispatchLoop[M any](
 	ctx context.Context,
 	m *Manager,
@@ -562,7 +658,7 @@ func dispatchLoop[M any](
 
 		channel := getChannel(msg)
 
-		// Silently skip internal channels
+		// 静默跳过内部渠道
 		if constants.IsInternalChannel(channel) {
 			continue
 		}
@@ -587,6 +683,7 @@ func dispatchLoop[M any](
 	}
 }
 
+// dispatchOutbound 调度出站消息到渠道
 func (m *Manager) dispatchOutbound(ctx context.Context) {
 	dispatchLoop(
 		ctx, m,
@@ -607,6 +704,7 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 	)
 }
 
+// dispatchOutboundMedia 调度出站媒体消息到渠道
 func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 	dispatchLoop(
 		ctx, m,
@@ -627,7 +725,12 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 	)
 }
 
-// runMediaWorker processes outbound media messages for a single channel.
+// runMediaWorker 处理单个渠道的出站媒体消息
+//
+// 参数：
+// - ctx: 上下文
+// - name: 渠道名称
+// - w: 渠道工作者
 func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWorker) {
 	defer close(w.mediaDone)
 	for {
@@ -643,8 +746,14 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 	}
 }
 
-// sendMediaWithRetry sends a media message through the channel with rate limiting and
-// retry logic. If the channel does not implement MediaSender, it silently skips.
+// sendMediaWithRetry 通过渠道发送媒体消息，带速率限制和重试逻辑
+// 如果渠道未实现 MediaSender 接口，则静默跳过
+//
+// 参数：
+// - ctx: 上下文
+// - name: 渠道名称
+// - w: 渠道工作者
+// - msg: 出站媒体消息
 func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) {
 	ms, ok := w.ch.(MediaSender)
 	if !ok {
@@ -654,7 +763,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		return
 	}
 
-	// Rate limit: wait for token
+	// 速率限制：等待令牌
 	if err := w.limiter.Wait(ctx); err != nil {
 		return
 	}
@@ -666,17 +775,17 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 			return
 		}
 
-		// Permanent failures — don't retry
+		// 永久性错误 — 不重试
 		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
 			break
 		}
 
-		// Last attempt exhausted — don't sleep
+		// 重试次数已用尽 — 不睡眠
 		if attempt == maxRetries {
 			break
 		}
 
-		// Rate limit error — fixed delay
+		// 速率限制错误 — 固定延迟
 		if errors.Is(lastErr, ErrRateLimit) {
 			select {
 			case <-time.After(rateLimitDelay):
@@ -686,7 +795,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 			}
 		}
 
-		// ErrTemporary or unknown error — exponential backoff
+		// ErrTemporary 或未知错误 — 指数退避
 		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
 		select {
 		case <-time.After(backoff):
@@ -695,7 +804,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		}
 	}
 
-	// All retries exhausted or permanent failure
+	// 重试耗尽或永久性失败
 	logger.ErrorCF("channels", "SendMedia failed", map[string]any{
 		"channel": name,
 		"chat_id": msg.ChatID,
@@ -704,9 +813,11 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 	})
 }
 
-// runTTLJanitor periodically scans the typingStops and placeholders maps
-// and evicts entries that have exceeded their TTL. This prevents memory
-// accumulation when outbound paths fail to trigger preSend (e.g. LLM errors).
+// runTTLJanitor 定期清理过时的输入指示器和占位符条目
+// 防止内存积累（当出站路径未能触发 preSend 时，如 LLM 错误）
+//
+// 参数：
+// - ctx: 上下文
 func (m *Manager) runTTLJanitor(ctx context.Context) {
 	ticker := time.NewTicker(janitorInterval)
 	defer ticker.Stop()
@@ -716,26 +827,29 @@ func (m *Manager) runTTLJanitor(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			// 清理过时的输入指示器停止函数
 			m.typingStops.Range(func(key, value any) bool {
 				if entry, ok := value.(typingEntry); ok {
 					if now.Sub(entry.createdAt) > typingStopTTL {
 						if _, loaded := m.typingStops.LoadAndDelete(key); loaded {
-							entry.stop() // idempotent, safe
+							entry.stop() // 幂等，安全
 						}
 					}
 				}
 				return true
 			})
+			// 清理过时的反应撤销函数
 			m.reactionUndos.Range(func(key, value any) bool {
 				if entry, ok := value.(reactionEntry); ok {
 					if now.Sub(entry.createdAt) > typingStopTTL {
 						if _, loaded := m.reactionUndos.LoadAndDelete(key); loaded {
-							entry.undo() // idempotent, safe
+							entry.undo() // 幂等，安全
 						}
 					}
 				}
 				return true
 			})
+			// 清理过时的占位符
 			m.placeholders.Range(func(key, value any) bool {
 				if entry, ok := value.(placeholderEntry); ok {
 					if now.Sub(entry.createdAt) > placeholderTTL {
@@ -748,6 +862,14 @@ func (m *Manager) runTTLJanitor(ctx context.Context) {
 	}
 }
 
+// GetChannel 根据名称获取渠道
+//
+// 参数：
+// - name: 渠道名称
+//
+// 返回：
+// - Channel: 渠道实例
+// - bool: 是否找到
 func (m *Manager) GetChannel(name string) (Channel, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -755,6 +877,10 @@ func (m *Manager) GetChannel(name string) (Channel, bool) {
 	return channel, ok
 }
 
+// GetStatus 获取所有渠道的状态
+//
+// 返回：
+// - map[string]any: 渠道状态映射
 func (m *Manager) GetStatus() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -769,6 +895,10 @@ func (m *Manager) GetStatus() map[string]any {
 	return status
 }
 
+// GetEnabledChannels 获取所有启用的渠道名称列表
+//
+// 返回：
+// - []string: 渠道名称列表
 func (m *Manager) GetEnabledChannels() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -780,12 +910,22 @@ func (m *Manager) GetEnabledChannels() []string {
 	return names
 }
 
+// RegisterChannel 注册渠道
+//
+// 参数：
+// - name: 渠道名称
+// - channel: 渠道实例
 func (m *Manager) RegisterChannel(name string, channel Channel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.channels[name] = channel
 }
 
+// UnregisterChannel 注销渠道
+// 关闭工作者并等待排空
+//
+// 参数：
+// - name: 渠道名称
 func (m *Manager) UnregisterChannel(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -799,6 +939,16 @@ func (m *Manager) UnregisterChannel(name string) {
 	delete(m.channels, name)
 }
 
+// SendToChannel 直接发送消息到渠道
+//
+// 参数：
+// - ctx: 上下文
+// - channelName: 渠道名称
+// - chatID: 聊天 ID
+// - content: 消息内容
+//
+// 返回：
+// - error: 发送错误
 func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {
 	m.mu.RLock()
 	_, exists := m.channels[channelName]
@@ -824,7 +974,7 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 		}
 	}
 
-	// Fallback: direct send (should not happen)
+	// 回退：直接发送（不应该发生）
 	channel, _ := m.channels[channelName]
 	return channel.Send(ctx, msg)
 }

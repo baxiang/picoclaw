@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件包含工具注册表（ToolRegistry）的实现
+
 package tools
 
 import (
@@ -7,21 +10,36 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/logger"   // 日志系统
+	"github.com/sipeed/picoclaw/pkg/providers" // LLM 提供商接口
 )
 
+// ToolRegistry 工具注册表
+// 管理所有可用工具的注册、查询和执行
+//
+// 字段说明：
+// - tools: 工具映射表（name -> Tool）
+// - mu: 读写锁，保护并发访问
 type ToolRegistry struct {
 	tools map[string]Tool
 	mu    sync.RWMutex
 }
 
+// NewToolRegistry 创建一个新的工具注册表
+//
+// 返回：
+// - 初始化好的 ToolRegistry 指针
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]Tool),
 	}
 }
 
+// Register 注册一个工具
+// 如果同名的工具已存在，会记录警告并覆盖
+//
+// 参数：
+// - tool: 要实现的工具接口
 func (r *ToolRegistry) Register(tool Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -33,6 +51,14 @@ func (r *ToolRegistry) Register(tool Tool) {
 	r.tools[name] = tool
 }
 
+// Get 根据名称获取工具
+//
+// 参数：
+// - name: 工具名称
+//
+// 返回：
+// - Tool: 工具接口
+// - bool: 是否找到
 func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -40,14 +66,34 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	return tool, ok
 }
 
+// Execute 执行工具
+// 不带上下文信息的简化版本
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - name: 工具名称
+// - args: 工具参数
+//
+// 返回：
+// - ToolResult: 工具执行结果
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) *ToolResult {
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
 }
 
-// ExecuteWithContext executes a tool with channel/chatID context and optional async callback.
-// If the tool implements AsyncExecutor and a non-nil callback is provided,
-// ExecuteAsync is called instead of Execute — the callback is a parameter,
-// never stored as mutable state on the tool.
+// ExecuteWithContext 执行工具（带上下文信息和异步回调）
+// 如果工具实现了 AsyncExecutor 接口且提供了回调，使用 ExecuteAsync
+// 否则使用同步的 Execute
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - name: 工具名称
+// - args: 工具参数
+// - channel: 渠道名称（如 telegram, discord）
+// - chatID: 聊天标识符
+// - asyncCallback: 异步回调函数（可选）
+//
+// 返回：
+// - ToolResult: 工具执行结果
 func (r *ToolRegistry) ExecuteWithContext(
 	ctx context.Context,
 	name string,
@@ -61,6 +107,7 @@ func (r *ToolRegistry) ExecuteWithContext(
 			"args": args,
 		})
 
+	// 获取工具
 	tool, ok := r.Get(name)
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
@@ -70,12 +117,11 @@ func (r *ToolRegistry) ExecuteWithContext(
 		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(fmt.Errorf("tool not found"))
 	}
 
-	// Inject channel/chatID into ctx so tools read them via ToolChannel(ctx)/ToolChatID(ctx).
-	// Always inject — tools validate what they require.
+	// 注入渠道和聊天 ID 到上下文
+	// 工具通过 ToolChannel(ctx)/ToolChatID(ctx) 读取这些信息
 	ctx = WithToolContext(ctx, channel, chatID)
 
-	// If tool implements AsyncExecutor and callback is provided, use ExecuteAsync.
-	// The callback is a call parameter, not mutable state on the tool instance.
+	// 如果工具实现了 AsyncExecutor 且提供了回调，使用异步执行
 	var result *ToolResult
 	start := time.Now()
 	if asyncExec, ok := tool.(AsyncExecutor); ok && asyncCallback != nil {
@@ -85,11 +131,12 @@ func (r *ToolRegistry) ExecuteWithContext(
 			})
 		result = asyncExec.ExecuteAsync(ctx, args, asyncCallback)
 	} else {
+		// 同步执行
 		result = tool.Execute(ctx, args)
 	}
 	duration := time.Since(start)
 
-	// Log based on result type
+	// 根据结果类型记录日志
 	if result.IsError {
 		logger.ErrorCF("tool", "Tool execution failed",
 			map[string]any{
@@ -115,10 +162,13 @@ func (r *ToolRegistry) ExecuteWithContext(
 	return result
 }
 
-// sortedToolNames returns tool names in sorted order for deterministic iteration.
-// This is critical for KV cache stability: non-deterministic map iteration would
-// produce different system prompts and tool definitions on each call, invalidating
-// the LLM's prefix cache even when no tools have changed.
+// sortedToolNames 返回排序后的工具名称列表
+// 这对于 KV 缓存稳定性至关重要：非确定性的 map 遍历
+// 会在每次调用时产生不同的系统提示和工具定义，
+// 即使工具没有变化也会使 LLM 的前缀缓存失效
+//
+// 返回：
+// - 排序后的工具名称列表
 func (r *ToolRegistry) sortedToolNames() []string {
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
@@ -128,6 +178,11 @@ func (r *ToolRegistry) sortedToolNames() []string {
 	return names
 }
 
+// GetDefinitions 获取所有工具的定义（JSON Schema 格式）
+// 按工具名称排序，确保确定性输出
+//
+// 返回：
+// - 工具定义列表（map 格式）
 func (r *ToolRegistry) GetDefinitions() []map[string]any {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -140,8 +195,11 @@ func (r *ToolRegistry) GetDefinitions() []map[string]any {
 	return definitions
 }
 
-// ToProviderDefs converts tool definitions to provider-compatible format.
-// This is the format expected by LLM provider APIs.
+// ToProviderDefs 将工具定义转换为提供商兼容的格式
+// 这是 LLM 提供商 API 期望的格式
+//
+// 返回：
+// - providers.ToolDefinition 列表
 func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -152,7 +210,7 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		tool := r.tools[name]
 		schema := ToolToSchema(tool)
 
-		// Safely extract nested values with type checks
+		// 安全地提取嵌套值（带类型检查）
 		fn, ok := schema["function"].(map[string]any)
 		if !ok {
 			continue
@@ -174,7 +232,10 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	return definitions
 }
 
-// List returns a list of all registered tool names.
+// List 返回所有已注册工具的有序名称列表
+//
+// 返回：
+// - 工具名称列表
 func (r *ToolRegistry) List() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -182,15 +243,21 @@ func (r *ToolRegistry) List() []string {
 	return r.sortedToolNames()
 }
 
-// Count returns the number of registered tools.
+// Count 返回已注册工具的数量
+//
+// 返回：
+// - 工具数量
 func (r *ToolRegistry) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.tools)
 }
 
-// GetSummaries returns human-readable summaries of all registered tools.
-// Returns a slice of "name - description" strings.
+// GetSummaries 返回所有已注册工具的人类可读摘要
+// 格式："- `name` - description"
+//
+// 返回：
+// - 工具摘要列表
 func (r *ToolRegistry) GetSummaries() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

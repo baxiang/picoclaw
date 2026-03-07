@@ -3,6 +3,9 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package config 提供配置管理功能
+// 本文件包含默认配置的定义
+
 package config
 
 import (
@@ -10,10 +13,18 @@ import (
 	"path/filepath"
 )
 
-// DefaultConfig returns the default configuration for PicoClaw.
+// DefaultConfig 返回 PicoClaw 的默认配置
+// 包括所有子系统的安全默认值
+//
+// 配置优先级：
+// 1. $PICOCLAW_HOME 环境变量（如果设置）
+// 2. ~/.picoclaw（默认家目录配置）
+//
+// 返回：
+// - *Config: 包含默认值的配置对象指针
 func DefaultConfig() *Config {
-	// Determine the base path for the workspace.
-	// Priority: $PICOCLAW_HOME > ~/.picoclaw
+	// 确定工作空间的基础路径
+	// 优先级：$PICOCLAW_HOME > ~/.picoclaw
 	var homePath string
 	if picoclawHome := os.Getenv("PICOCLAW_HOME"); picoclawHome != "" {
 		homePath = picoclawHome
@@ -31,7 +42,7 @@ func DefaultConfig() *Config {
 				Provider:                  "",
 				Model:                     "",
 				MaxTokens:                 32768,
-				Temperature:               nil, // nil means use provider default
+				Temperature:               nil, // nil 表示使用提供商默认值
 				MaxToolIterations:         50,
 				SummarizeMessageThreshold: 20,
 				SummarizeTokenPercent:     75,
@@ -39,7 +50,7 @@ func DefaultConfig() *Config {
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
-			DMScope: "per-channel-peer",
+			DMScope: "per-channel-peer", // 每个渠道的每个对等体独立会话
 		},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
@@ -164,10 +175,10 @@ func DefaultConfig() *Config {
 		},
 		ModelList: []ModelConfig{
 			// ============================================
-			// Add your API key to the model you want to use
+			// 添加 API Key 到你想使用的模型
 			// ============================================
 
-			// Zhipu AI (智谱) - https://open.bigmodel.cn/usercenter/apikeys
+			// Zhipu AI (智谱 AI) - https://open.bigmodel.cn/usercenter/apikeys
 			{
 				ModelName: "glm-4.7",
 				Model:     "zhipu/glm-4.7",
@@ -191,7 +202,7 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 			},
 
-			// DeepSeek - https://platform.deepseek.com/
+			// DeepSeek (深度求索) - https://platform.deepseek.com/
 			{
 				ModelName: "deepseek-chat",
 				Model:     "deepseek/deepseek-chat",
@@ -231,7 +242,7 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 			},
 
-			// OpenRouter (100+ models) - https://openrouter.ai/keys
+			// OpenRouter (100+ 模型) - https://openrouter.ai/keys
 			{
 				ModelName: "openrouter-auto",
 				Model:     "openrouter/auto",
@@ -277,7 +288,7 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 			},
 
-			// Antigravity (Google Cloud Code Assist) - OAuth only
+			// Antigravity (Google Cloud Code Assist) - 仅支持 OAuth
 			{
 				ModelName:  "gemini-flash",
 				Model:      "antigravity/gemini-3-flash",
@@ -292,7 +303,7 @@ func DefaultConfig() *Config {
 				AuthMethod: "oauth",
 			},
 
-			// Ollama (local) - https://ollama.com
+			// Ollama (本地运行) - https://ollama.com
 			{
 				ModelName: "llama3",
 				Model:     "ollama/llama3",
@@ -322,7 +333,7 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 			},
 
-			// VLLM (local) - http://localhost:8000
+			// VLLM (本地运行) - http://localhost:8000
 			{
 				ModelName: "local-model",
 				Model:     "vllm/custom-model",
@@ -331,30 +342,30 @@ func DefaultConfig() *Config {
 			},
 		},
 		Gateway: GatewayConfig{
-			Host: "127.0.0.1",
-			Port: 18790,
+			Host: "127.0.0.1", // 默认仅监听本地
+			Port: 18790,       // 默认网关端口
 		},
 		Tools: ToolsConfig{
 			MediaCleanup: MediaCleanupConfig{
 				ToolConfig: ToolConfig{
 					Enabled: true,
 				},
-				MaxAge:   30,
-				Interval: 5,
+				MaxAge:   30,    // 媒体文件保留 30 分钟
+				Interval: 5,     // 每 5 分钟清理一次
 			},
 			Web: WebToolsConfig{
 				ToolConfig: ToolConfig{
 					Enabled: true,
 				},
 				Proxy:           "",
-				FetchLimitBytes: 10 * 1024 * 1024, // 10MB by default
+				FetchLimitBytes: 10 * 1024 * 1024, // 默认 10MB 抓取限制
 				Brave: BraveConfig{
 					Enabled:    false,
 					APIKey:     "",
 					MaxResults: 5,
 				},
 				DuckDuckGo: DuckDuckGoConfig{
-					Enabled:    true,
+					Enabled:    true,  // 默认启用 DuckDuckGo
 					MaxResults: 5,
 				},
 				Perplexity: PerplexityConfig{
@@ -379,14 +390,14 @@ func DefaultConfig() *Config {
 				ToolConfig: ToolConfig{
 					Enabled: true,
 				},
-				ExecTimeoutMinutes: 5,
+				ExecTimeoutMinutes: 5, // 定时任务超时 5 分钟
 			},
 			Exec: ExecConfig{
 				ToolConfig: ToolConfig{
 					Enabled: true,
 				},
-				EnableDenyPatterns: true,
-				TimeoutSeconds:     60,
+				EnableDenyPatterns: true, // 默认启用命令拒绝模式
+				TimeoutSeconds:     60,   // 默认超时 60 秒
 			},
 			Skills: SkillsToolsConfig{
 				ToolConfig: ToolConfig{
@@ -398,10 +409,10 @@ func DefaultConfig() *Config {
 						BaseURL: "https://clawhub.ai",
 					},
 				},
-				MaxConcurrentSearches: 2,
+				MaxConcurrentSearches: 2, // 最多 2 个并发搜索
 				SearchCache: SearchCacheConfig{
-					MaxSize:    50,
-					TTLSeconds: 300,
+					MaxSize:    50,  // 缓存最多 50 条
+					TTLSeconds: 300, // 缓存 5 分钟过期
 				},
 			},
 			SendFile: ToolConfig{
@@ -423,7 +434,7 @@ func DefaultConfig() *Config {
 				Enabled: true,
 			},
 			I2C: ToolConfig{
-				Enabled: false, // Hardware tool - Linux only
+				Enabled: false, // 硬件工具 - 仅 Linux 支持
 			},
 			InstallSkill: ToolConfig{
 				Enabled: true,
@@ -441,7 +452,7 @@ func DefaultConfig() *Config {
 				Enabled: true,
 			},
 			SPI: ToolConfig{
-				Enabled: false, // Hardware tool - Linux only
+				Enabled: false, // 硬件工具 - 仅 Linux 支持
 			},
 			Subagent: ToolConfig{
 				Enabled: true,
@@ -455,7 +466,7 @@ func DefaultConfig() *Config {
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
-			Interval: 30,
+			Interval: 30, // 30 分钟心跳间隔
 		},
 		Devices: DevicesConfig{
 			Enabled:    false,

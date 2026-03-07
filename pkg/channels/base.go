@@ -1,3 +1,7 @@
+// Package channels 提供通讯渠道功能
+// 本文件包含渠道基础实现
+// 支持多种通讯平台：Telegram、Discord、WhatsApp、微信等
+
 package channels
 
 import (
@@ -18,80 +22,96 @@ import (
 )
 
 var (
-	uniqueIDCounter uint64
-	uniqueIDPrefix  string
+	uniqueIDCounter uint64 // 唯一 ID 计数器
+	uniqueIDPrefix  string // 唯一 ID 前缀（随机生成）
 )
 
 func init() {
-	// One-time read from crypto/rand for a unique prefix (single syscall).
+	// 从 crypto/rand 一次性读取随机数作为前缀（单次系统调用）
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		// fallback to time-based prefix
+		// 回退到基于时间的前缀
 		binary.BigEndian.PutUint64(b[:], uint64(time.Now().UnixNano()))
 	}
 	uniqueIDPrefix = hex.EncodeToString(b[:])
 }
 
-// uniqueID generates a process-unique ID using a random prefix and an atomic counter.
-// This ID is intended for internal correlation (e.g. media scope keys) and is NOT
-// cryptographically secure — it must not be used in contexts where unpredictability matters.
+// uniqueID 生成进程唯一 ID
+// 使用随机前缀和原子计数器
+// 此 ID 用于内部关联（如媒体作用域键），不是加密安全的
+// 不得用于需要不可预测性的场景
 func uniqueID() string {
 	n := atomic.AddUint64(&uniqueIDCounter, 1)
 	return uniqueIDPrefix + strconv.FormatUint(n, 16)
 }
 
+// Channel 渠道接口
+// 所有通讯渠道必须实现此接口
 type Channel interface {
-	Name() string
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-	Send(ctx context.Context, msg bus.OutboundMessage) error
-	IsRunning() bool
-	IsAllowed(senderID string) bool
-	IsAllowedSender(sender bus.SenderInfo) bool
-	ReasoningChannelID() string
+	Name() string                              // 返回渠道名称
+	Start(ctx context.Context) error           // 启动渠道
+	Stop(ctx context.Context) error            // 停止渠道
+	Send(ctx context.Context, msg bus.OutboundMessage) error // 发送消息
+	IsRunning() bool                           // 是否正在运行
+	IsAllowed(senderID string) bool            // 是否允许给定发送者
+	IsAllowedSender(sender bus.SenderInfo) bool // 是否允许给定发送者（结构化）
+	ReasoningChannelID() string                // 返回思考频道 ID
 }
 
-// BaseChannelOption is a functional option for configuring a BaseChannel.
+// BaseChannelOption 基础渠道的功能选项
 type BaseChannelOption func(*BaseChannel)
 
-// WithMaxMessageLength sets the maximum message length (in runes) for a channel.
-// Messages exceeding this limit will be automatically split by the Manager.
-// A value of 0 means no limit.
+// WithMaxMessageLength 设置渠道的最大消息长度（按字符计算）
+// 超过此限制的消息将被 Manager 自动分割
+// 值为 0 表示无限制
 func WithMaxMessageLength(n int) BaseChannelOption {
 	return func(c *BaseChannel) { c.maxMessageLength = n }
 }
 
-// WithGroupTrigger sets the group trigger configuration for a channel.
+// WithGroupTrigger 设置渠道的群聊触发配置
 func WithGroupTrigger(gt config.GroupTriggerConfig) BaseChannelOption {
 	return func(c *BaseChannel) { c.groupTrigger = gt }
 }
 
-// WithReasoningChannelID sets the reasoning channel ID where thoughts should be sent.
+// WithReasoningChannelID 设置思考频道 ID，思考消息将发送到此频道
 func WithReasoningChannelID(id string) BaseChannelOption {
 	return func(c *BaseChannel) { c.reasoningChannelID = id }
 }
 
-// MessageLengthProvider is an opt-in interface that channels implement
-// to advertise their maximum message length. The Manager uses this via
-// type assertion to decide whether to split outbound messages.
+// MessageLengthProvider 消息长度提供者接口
+// 渠道可以实现此接口来宣告它们的最大消息长度
+// Manager 通过类型断言使用此接口来决定是否分割出站消息
 type MessageLengthProvider interface {
 	MaxMessageLength() int
 }
 
+// BaseChannel 基础渠道结构
+// 提供所有渠道共用的基础功能
 type BaseChannel struct {
-	config              any
-	bus                 *bus.MessageBus
-	running             atomic.Bool
-	name                string
-	allowList           []string
-	maxMessageLength    int
-	groupTrigger        config.GroupTriggerConfig
-	mediaStore          media.MediaStore
-	placeholderRecorder PlaceholderRecorder
-	owner               Channel // the concrete channel that embeds this BaseChannel
-	reasoningChannelID  string
+	config              any                   // 渠道配置
+	bus                 *bus.MessageBus       // 消息总线
+	running             atomic.Bool           // 运行状态
+	name                string                // 渠道名称
+	allowList           []string              // 允许列表
+	maxMessageLength    int                   // 最大消息长度
+	groupTrigger        config.GroupTriggerConfig // 群聊触发配置
+	mediaStore          media.MediaStore      // 媒体存储
+	placeholderRecorder PlaceholderRecorder   // 占位符记录器
+	owner               Channel               // 嵌入此基础渠道的具体渠道
+	reasoningChannelID  string                // 思考频道 ID
 }
 
+// NewBaseChannel 创建基础渠道
+//
+// 参数：
+// - name: 渠道名称
+// - config: 渠道配置
+// - bus: 消息总线
+// - allowList: 允许列表
+// - opts: 可选配置选项
+//
+// 返回：
+// - *BaseChannel: 基础渠道指针
 func NewBaseChannel(
 	name string,
 	config any,
@@ -111,70 +131,89 @@ func NewBaseChannel(
 	return bc
 }
 
-// MaxMessageLength returns the maximum message length (in runes) for this channel.
-// A value of 0 means no limit.
+// MaxMessageLength 返回最大消息长度（按字符计算）
+// 值为 0 表示无限制
 func (c *BaseChannel) MaxMessageLength() int {
 	return c.maxMessageLength
 }
 
-// ShouldRespondInGroup determines whether the bot should respond in a group chat.
-// Each channel is responsible for:
-//  1. Detecting isMentioned (platform-specific)
-//  2. Stripping bot mention from content (platform-specific)
-//  3. Calling this method to get the group response decision
+// ShouldRespondInGroup 判断是否应该在群聊中响应
+// 每个渠道负责：
+//  1. 检测是否被 @（平台特定）
+//  2. 从内容中剥离机器人提及（平台特定）
+//  3. 调用此方法获取群聊响应决策
 //
-// Logic:
-//   - If isMentioned → always respond
-//   - If mention_only configured and not mentioned → ignore
-//   - If prefixes configured → respond if content starts with any prefix (strip it)
-//   - If prefixes configured but no match and not mentioned → ignore
-//   - Otherwise (no group_trigger configured) → respond to all (permissive default)
+// 逻辑：
+//   - 如果被 @ → 总是响应
+//   - 如果配置了 mention_only 且未被提及 → 忽略
+//   - 如果配置了前缀 → 如果内容以任何前缀开头则响应（并剥离前缀）
+//   - 如果配置了前缀但没有匹配且未被提及 → 忽略
+//   - 否则（未配置群聊触发）→ 响应所有（宽松默认）
+//
+// 参数：
+// - isMentioned: 是否被提及
+// - content: 消息内容
+//
+// 返回：
+// - bool: 是否应该响应
+// - string: 处理后的内容（可能已剥离前缀）
 func (c *BaseChannel) ShouldRespondInGroup(isMentioned bool, content string) (bool, string) {
 	gt := c.groupTrigger
 
-	// Mentioned → always respond
+	// 被提及 → 总是响应
 	if isMentioned {
 		return true, strings.TrimSpace(content)
 	}
 
-	// mention_only → require mention
+	// mention_only → 需要提及
 	if gt.MentionOnly {
 		return false, content
 	}
 
-	// Prefix matching
+	// 前缀匹配
 	if len(gt.Prefixes) > 0 {
 		for _, prefix := range gt.Prefixes {
 			if prefix != "" && strings.HasPrefix(content, prefix) {
 				return true, strings.TrimSpace(strings.TrimPrefix(content, prefix))
 			}
 		}
-		// Prefixes configured but none matched and not mentioned → ignore
+		// 配置了前缀但没有匹配且未被提及 → 忽略
 		return false, content
 	}
 
-	// No group_trigger configured → permissive (respond to all)
+	// 未配置群聊触发 → 宽松（响应所有）
 	return true, strings.TrimSpace(content)
 }
 
+// Name 返回渠道名称
 func (c *BaseChannel) Name() string {
 	return c.name
 }
 
+// ReasoningChannelID 返回思考频道 ID
 func (c *BaseChannel) ReasoningChannelID() string {
 	return c.reasoningChannelID
 }
 
+// IsRunning 返回渠道是否正在运行
 func (c *BaseChannel) IsRunning() bool {
 	return c.running.Load()
 }
 
+// IsAllowed 检查发送者是否在允许列表中
+// 支持复合发送者 ID 格式（如 "123456|username"）
+//
+// 参数：
+// - senderID: 发送者 ID
+//
+// 返回：
+// - bool: 是否允许
 func (c *BaseChannel) IsAllowed(senderID string) bool {
 	if len(c.allowList) == 0 {
 		return true
 	}
 
-	// Extract parts from compound senderID like "123456|username"
+	// 从复合发送者 ID 中提取部分（如 "123456|username"）
 	idPart := senderID
 	userPart := ""
 	if idx := strings.Index(senderID, "|"); idx > 0 {
@@ -183,7 +222,7 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 	}
 
 	for _, allowed := range c.allowList {
-		// Strip leading "@" from allowed value for username matching
+		// 从允许值中剥离前导 "@" 用于用户名匹配
 		trimmed := strings.TrimPrefix(allowed, "@")
 		allowedID := trimmed
 		allowedUser := ""
@@ -192,8 +231,8 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 			allowedUser = trimmed[idx+1:]
 		}
 
-		// Support either side using "id|username" compound form.
-		// This keeps backward compatibility with legacy Telegram allowlist entries.
+		// 支持任一方使用 "id|username" 复合形式
+		// 这保持了与旧版 Telegram 允许列表条目的向后兼容性
 		if senderID == allowed ||
 			idPart == allowed ||
 			senderID == trimmed ||
@@ -208,9 +247,15 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 	return false
 }
 
-// IsAllowedSender checks whether a structured SenderInfo is permitted by the allow-list.
-// It delegates to identity.MatchAllowed for each entry, providing unified matching
-// across all legacy formats and the new canonical "platform:id" format.
+// IsAllowedSender 检查结构化的 SenderInfo 是否被允许列表允许
+// 对每个条目委托给 identity.MatchAllowed，提供统一的匹配
+// 跨越所有旧格式和新的规范 "platform:id" 格式
+//
+// 参数：
+// - sender: 发送者信息
+//
+// 返回：
+// - bool: 是否允许
 func (c *BaseChannel) IsAllowedSender(sender bus.SenderInfo) bool {
 	if len(c.allowList) == 0 {
 		return true
@@ -225,6 +270,19 @@ func (c *BaseChannel) IsAllowedSender(sender bus.SenderInfo) bool {
 	return false
 }
 
+// HandleMessage 处理传入消息
+// 验证发送者权限并发布到消息总线
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - peer: 对等体信息
+// - messageID: 消息 ID
+// - senderID: 发送者 ID
+// - chatID: 聊天 ID
+// - content: 消息内容
+// - media: 媒体 URL 列表
+// - metadata: 元数据
+// - senderOpts: 可选的发送者信息
 func (c *BaseChannel) HandleMessage(
 	ctx context.Context,
 	peer bus.Peer,
@@ -233,7 +291,7 @@ func (c *BaseChannel) HandleMessage(
 	metadata map[string]string,
 	senderOpts ...bus.SenderInfo,
 ) {
-	// Use SenderInfo-based allow check when available, else fall back to string
+	// 当可用时使用基于 SenderInfo 的允许检查，否则回退到字符串
 	var sender bus.SenderInfo
 	if len(senderOpts) > 0 {
 		sender = senderOpts[0]
@@ -248,7 +306,7 @@ func (c *BaseChannel) HandleMessage(
 		}
 	}
 
-	// Set SenderID to canonical if available, otherwise keep the raw senderID
+	// 设置 SenderID 为规范 ID（如果可用），否则保留原始 senderID
 	resolvedSenderID := senderID
 	if sender.CanonicalID != "" {
 		resolvedSenderID = sender.CanonicalID
@@ -269,22 +327,22 @@ func (c *BaseChannel) HandleMessage(
 		Metadata:   metadata,
 	}
 
-	// Auto-trigger typing indicator, message reaction, and placeholder before publishing.
-	// Each capability is independent — all three may fire for the same message.
+	// 在发布前自动触发输入指示器、消息反应和占位符
+	// 每个能力是独立的 — 所有三个可能为同一消息触发
 	if c.owner != nil && c.placeholderRecorder != nil {
-		// Typing — independent pipeline
+		// 输入指示器 — 独立流水线
 		if tc, ok := c.owner.(TypingCapable); ok {
 			if stop, err := tc.StartTyping(ctx, chatID); err == nil {
 				c.placeholderRecorder.RecordTypingStop(c.name, chatID, stop)
 			}
 		}
-		// Reaction — independent pipeline
+		// 消息反应 — 独立流水线
 		if rc, ok := c.owner.(ReactionCapable); ok && messageID != "" {
 			if undo, err := rc.ReactToMessage(ctx, chatID, messageID); err == nil {
 				c.placeholderRecorder.RecordReactionUndo(c.name, chatID, undo)
 			}
 		}
-		// Placeholder — independent pipeline
+		// 占位符 — 独立流水线
 		if pc, ok := c.owner.(PlaceholderCapable); ok {
 			if phID, err := pc.SendPlaceholder(ctx, chatID); err == nil && phID != "" {
 				c.placeholderRecorder.RecordPlaceholder(c.name, chatID, phID)
@@ -301,33 +359,42 @@ func (c *BaseChannel) HandleMessage(
 	}
 }
 
+// SetRunning 设置运行状态
 func (c *BaseChannel) SetRunning(running bool) {
 	c.running.Store(running)
 }
 
-// SetMediaStore injects a MediaStore into the channel.
+// SetMediaStore 注入媒体存储到渠道
 func (c *BaseChannel) SetMediaStore(s media.MediaStore) { c.mediaStore = s }
 
-// GetMediaStore returns the injected MediaStore (may be nil).
+// GetMediaStore 返回注入的媒体存储（可能为 nil）
 func (c *BaseChannel) GetMediaStore() media.MediaStore { return c.mediaStore }
 
-// SetPlaceholderRecorder injects a PlaceholderRecorder into the channel.
+// SetPlaceholderRecorder 注入占位符记录器到渠道
 func (c *BaseChannel) SetPlaceholderRecorder(r PlaceholderRecorder) {
 	c.placeholderRecorder = r
 }
 
-// GetPlaceholderRecorder returns the injected PlaceholderRecorder (may be nil).
+// GetPlaceholderRecorder 返回注入的占位符记录器（可能为 nil）
 func (c *BaseChannel) GetPlaceholderRecorder() PlaceholderRecorder {
 	return c.placeholderRecorder
 }
 
-// SetOwner injects the concrete channel that embeds this BaseChannel.
-// This allows HandleMessage to auto-trigger TypingCapable / ReactionCapable / PlaceholderCapable.
+// SetOwner 注入嵌入此基础渠道的具体渠道
+// 这允许 HandleMessage 自动触发 TypingCapable / ReactionCapable / PlaceholderCapable
 func (c *BaseChannel) SetOwner(ch Channel) {
 	c.owner = ch
 }
 
-// BuildMediaScope constructs a scope key for media lifecycle tracking.
+// BuildMediaScope 构建媒体生命周期跟踪的作用域键
+//
+// 参数：
+// - channel: 渠道名称
+// - chatID: 聊天 ID
+// - messageID: 消息 ID
+//
+// 返回：
+// - string: 作用域键（格式：channel:chatID:messageID）
 func BuildMediaScope(channel, chatID, messageID string) string {
 	id := messageID
 	if id == "" {
