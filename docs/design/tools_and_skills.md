@@ -1,6 +1,6 @@
 # Tools 和 Skills 技术文档
 
-> 文档版本：1.0  
+> 文档版本：1.1  
 > 最后更新：2026-03-07  
 > 作者：PicoClaw Team
 
@@ -250,8 +250,8 @@ func (sl *SkillsLoader) BuildSkillsSummary() string {
 │  System Prompt  │
 │                 │
 │  # Skills       │
-│  <skills>       │
-│    <name>       │ ← AI 看到技能列表
+│  <skills>       │ ← AI 看到技能列表
+│    <name>       │
 │      weather    │
 │    </name>      │
 │  </skills>      │
@@ -386,23 +386,93 @@ func (sl *SkillsLoader) BuildSkillsSummary() string {
 
 ## System Prompt 数据格式
 
-### 首轮对话格式
+### 什么是 system_parts？
+
+`system_parts` 是 PicoClaw 为了优化 LLM 调用性能而设计的**分块缓存机制**。它将 System Prompt 分为多个块（ContentBlock），每个块可以独立设置缓存策略。
+
+```go
+// pkg/providers/types.go
+type ContentBlock struct {
+    Type         string         `json:"type"`          // 内容类型："text", "image", etc.
+    Text         string         `json:"text"`          // 文本内容
+    CacheControl *CacheControl  `json:"cache_control,omitempty"` // 缓存控制
+}
+
+type CacheControl struct {
+    Type string `json:"type"`  // "ephemeral" - 临时缓存（Anthropic）
+}
+```
+
+#### 静态部分（缓存）
+
+**静态部分**包含每次对话都相同的内容，使用 `cache_control: {type: "ephemeral"}` 标记，LLM 提供商（如 Anthropic）会缓存这部分的 KV 状态，避免重复计算。
+
+**包含内容：**
+1. **Identity（身份定义）** - AI 的基本身份和规则
+2. **Bootstrap Files** - AGENTS.md, SOUL.md, USER.md, IDENTITY.md
+3. **Skills Summary** - 技能列表（XML 格式）
+4. **Memory Context** - MEMORY.md 和最近日记
+
+**代码位置：** `pkg/agent/context.go:BuildSystemPromptWithCache()`
+
+```go
+// 静态部分被缓存以避免每次调用时重复的文件 I/O 和字符串构建
+staticPrompt := cb.BuildSystemPromptWithCache()
+
+contentBlocks := []providers.ContentBlock{
+    {
+        Type: "text", 
+        Text: staticPrompt, 
+        CacheControl: &providers.CacheControl{Type: "ephemeral"},
+    },
+    // ...
+}
+```
+
+#### 动态部分（每次变化）
+
+**动态部分**包含每次请求都变化的内容，不设置缓存，每次都会重新计算。
+
+**包含内容：**
+1. **当前时间** - 格式化的日期时间
+2. **运行时信息** - OS、架构、Go 版本
+3. **会话信息** - Channel 和 ChatID
+4. **对话摘要**（如果有）- 之前对话的摘要
+
+**代码位置：** `pkg/agent/context.go:buildDynamicContext()`
+
+```go
+// 构建简短的动态上下文（时间、运行时、会话）—— 每次请求变化
+dynamicCtx := cb.buildDynamicContext(channel, chatID)
+
+contentBlocks := []providers.ContentBlock{
+    // ...
+    {
+        Type: "text",
+        Text: dynamicCtx,  // 无缓存控制，每次都重新计算
+    },
+}
+```
+
+---
+
+### 首轮对话格式（完整 content）
 
 ```json
 {
   "messages": [
     {
       "role": "system",
-      "content": "# picoclaw 🦞\n\nYou are picoclaw, a helpful AI assistant.\n\n## Workspace\nYour workspace is at: /home/user/.picoclaw/workspace\n- Memory: /home/user/.picoclaw/workspace/memory/MEMORY.md\n- Daily Notes: /home/user/.picoclaw/workspace/memory/YYYYMM/YYYYMMDD.md\n- Skills: /home/user/.picoclaw/workspace/skills/{skill-name}/SKILL.md\n\n## Important Rules\n\n1. **ALWAYS use tools** - ...\n\n---\n\n# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n<skills>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts (no API key required).</description>\n    <location>/home/user/.picoclaw/workspace/skills/weather</location>\n    <source>workspace</source>\n  </skill>\n</skills>\n\n---\n\n## Current Time\n2026-03-07 15:30 (Saturday)\n\n## Runtime\ndarwin arm64, Go go1.25.7\n\n## Current Session\nChannel: cli\nChat ID: direct",
+      "content": "# picoclaw 🦞\n\nYou are picoclaw, a helpful AI assistant.\n\n## Workspace\nYour workspace is at: /home/user/.picoclaw/workspace\n- Memory: /home/user/.picoclaw/workspace/memory/MEMORY.md\n- Daily Notes: /home/user/.picoclaw/workspace/memory/YYYYMM/YYYYMMDD.md\n- Skills: /home/user/.picoclaw/workspace/skills/{skill-name}/SKILL.md\n\n## Important Rules\n\n1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.\n\n2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n3. **Memory** - When interacting with me if something seems memorable, update /home/user/.picoclaw/workspace/memory/MEMORY.md\n\n4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.\n\n---\n\n## AGENTS.md\n\n[如果存在 AGENTS.md 文件，内容在这里。例如：\n\n# Agent Guidelines\n\n- Be proactive and helpful\n- Always verify information before responding\n- Use tools for all actions\n]\n\n---\n\n## SOUL.md\n\n[如果存在 SOUL.md 文件，内容在这里。例如：\n\n# Agent Soul\n\nYou are a proactive AI assistant that anticipates user needs.\n]\n\n---\n\n## USER.md\n\n[如果存在 USER.md 文件，内容在这里。例如：\n\n# User Preferences\n\n- Name: John Doe\n- Timezone: UTC+8\n- Preferred language: English\n]\n\n---\n\n## IDENTITY.md\n\n[如果存在 IDENTITY.md 文件，内容在这里。例如：\n\n# Agent Identity\n\nYou are picoclaw, an AI assistant running locally.\n]\n\n---\n\n# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n<skills>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts (no API key required).</description>\n    <location>/home/user/.picoclaw/workspace/skills/weather</location>\n    <source>workspace</source>\n  </skill>\n  <skill>\n    <name>github</name>\n    <description>Search and read GitHub repositories.</description>\n    <location>/home/user/.picoclaw/workspace/skills/github</location>\n    <source>workspace</source>\n  </skill>\n  <skill>\n    <name>summarize</name>\n    <description>Summarize long documents or articles.</description>\n    <location>/home/user/.picoclaw/workspace/skills/summarize</location>\n    <source>workspace</source>\n  </skill>\n</skills>\n\n---\n\n# Memory\n\n## Long-term Memory\n\n[如果 MEMORY.md 存在，内容在这里。例如：\n\n# User Memory\n\n- User works as a software engineer\n- User prefers concise responses\n- User is located in Beijing\n]\n\n---\n\n## Recent Daily Notes\n\n[最近 3 天的日记内容。例如：\n\n---\n\n# 2026-03-07\n\n- User asked about weather forecast\n- User is planning a trip next week\n\n---\n\n# 2026-03-06\n\n- User worked on PicoClaw project\n- User fixed several bugs\n]\n\n---\n\n## Current Time\n2026-03-07 15:30 (Saturday)\n\n## Runtime\ndarwin arm64, Go go1.25.7\n\n## Current Session\nChannel: cli\nChat ID: direct",
       "system_parts": [
         {
           "type": "text",
-          "text": "[静态部分 - 缓存]",
+          "text": "# picoclaw 🦞\n\nYou are picoclaw, a helpful AI assistant.\n\n## Workspace\nYour workspace is at: /home/user/.picoclaw/workspace\n- Memory: /home/user/.picoclaw/workspace/memory/MEMORY.md\n- Daily Notes: /home/user/.picoclaw/workspace/memory/YYYYMM/YYYYMMDD.md\n- Skills: /home/user/.picoclaw/workspace/skills/{skill-name}/SKILL.md\n\n## Important Rules\n\n1. **ALWAYS use tools** - ...\n\n---\n\n## AGENTS.md\n[内容]\n\n---\n\n## SOUL.md\n[内容]\n\n---\n\n## USER.md\n[内容]\n\n---\n\n## IDENTITY.md\n[内容]\n\n---\n\n# Skills\n\n<skills>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts (no API key required).</description>\n    <location>/home/user/.picoclaw/workspace/skills/weather</location>\n    <source>workspace</source>\n  </skill>\n</skills>\n\n---\n\n# Memory\n\n## Long-term Memory\n[内容]\n\n---\n\n## Recent Daily Notes\n[内容]",
           "cache_control": {"type": "ephemeral"}
         },
         {
           "type": "text",
-          "text": "[动态部分 - 每次变化]"
+          "text": "## Current Time\n2026-03-07 15:30 (Saturday)\n\n## Runtime\ndarwin arm64, Go go1.25.7\n\n## Current Session\nChannel: cli\nChat ID: direct"
         }
       ]
     },
@@ -414,18 +484,28 @@ func (sl *SkillsLoader) BuildSkillsSummary() string {
 }
 ```
 
-### 第二轮对话格式（带摘要）
+### 第二轮对话格式（完整 content + 摘要）
 
 ```json
 {
   "messages": [
     {
       "role": "system",
-      "content": "[... System Prompt 同上 ...]\n\n---\n\nCONTEXT_SUMMARY: The following is an approximate summary of prior conversation for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n用户询问了北京的天气，我使用 web_search 工具查询了天气信息，返回北京晴朗，+8°C，湿度 45%。用户现在询问上海的天气。",
+      "content": "# picoclaw 🦞\n\nYou are picoclaw, a helpful AI assistant.\n\n## Workspace\nYour workspace is at: /home/user/.picoclaw/workspace\n- Memory: /home/user/.picoclaw/workspace/memory/MEMORY.md\n- Daily Notes: /home/user/.picoclaw/workspace/memory/YYYYMM/YYYYMMDD.md\n- Skills: /home/user/.picoclaw/workspace/skills/{skill-name}/SKILL.md\n\n## Important Rules\n\n1. **ALWAYS use tools** - ...\n\n---\n\n## AGENTS.md\n[内容]\n\n---\n\n## SOUL.md\n[内容]\n\n---\n\n## USER.md\n[内容]\n\n---\n\n## IDENTITY.md\n[内容]\n\n---\n\n# Skills\n\n<skills>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts (no API key required).</description>\n    <location>/home/user/.picoclaw/workspace/skills/weather</location>\n    <source>workspace</source>\n  </skill>\n</skills>\n\n---\n\n# Memory\n\n## Long-term Memory\n[内容]\n\n---\n\n## Recent Daily Notes\n[内容]\n\n---\n\n## Current Time\n2026-03-07 15:32 (Saturday)\n\n## Runtime\ndarwin arm64, Go go1.25.7\n\n## Current Session\nChannel: cli\nChat ID: direct\n\n---\n\nCONTEXT_SUMMARY: The following is an approximate summary of prior conversation for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n用户询问了北京的天气，我使用 web_search 工具查询了天气信息，返回北京晴朗，+8°C，湿度 45%。用户现在询问上海的天气。",
       "system_parts": [
-        {"type": "text", "text": "[静态部分]", "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": "[动态部分]"},
-        {"type": "text", "text": "[摘要部分]"}
+        {
+          "type": "text",
+          "text": "# picoclaw 🦞\n\nYou are picoclaw, a helpful AI assistant.\n\n## Workspace\n...\n\n# Skills\n\n<skills>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts (no API key required).</description>\n    <location>/home/user/.picoclaw/workspace/skills/weather</location>\n    <source>workspace</source>\n  </skill>\n</skills>\n\n---\n\n# Memory\n\n## Long-term Memory\n[内容]\n\n---\n\n## Recent Daily Notes\n[内容]",
+          "cache_control": {"type": "ephemeral"}
+        },
+        {
+          "type": "text",
+          "text": "## Current Time\n2026-03-07 15:32 (Saturday)\n\n## Runtime\ndarwin arm64, Go go1.25.7\n\n## Current Session\nChannel: cli\nChat ID: direct"
+        },
+        {
+          "type": "text",
+          "text": "CONTEXT_SUMMARY: The following is an approximate summary of prior conversation for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n用户询问了北京的天气，我使用 web_search 工具查询了天气信息，返回北京晴朗，+8°C，湿度 45%。用户现在询问上海的天气。"
+        }
       ]
     },
     {"role": "user", "content": "你好，请帮我查询北京的天气"},
