@@ -1,3 +1,6 @@
+// Package mcp 提供 Model Context Protocol (MCP) 支持
+// 允许连接外部 MCP 服务器以扩展 AI 的能力
+// 支持 HTTP 和 STDIO 两种传输方式
 package mcp
 
 import (
@@ -19,22 +22,22 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
-// headerTransport is an http.RoundTripper that adds custom headers to requests
+// headerTransport 是一个 http.RoundTripper，为请求添加自定义头部
 type headerTransport struct {
 	base    http.RoundTripper
 	headers map[string]string
 }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Clone the request to avoid modifying the original
+	// 克隆请求以避免修改原始请求
 	req = req.Clone(req.Context())
 
-	// Add custom headers
+	// 添加自定义头部
 	for key, value := range t.headers {
 		req.Header.Set(key, value)
 	}
 
-	// Use the base transport
+	// 使用基础传输
 	base := t.base
 	if base == nil {
 		base = http.DefaultTransport
@@ -42,10 +45,17 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return base.RoundTrip(req)
 }
 
-// loadEnvFile loads environment variables from a file in .env format
-// Each line should be in the format: KEY=value
-// Lines starting with # are comments
-// Empty lines are ignored
+// loadEnvFile 从 .env 格式的文件加载环境变量
+// 每行应该是 KEY=value 格式
+// 以 # 开头的行是注释
+// 空行被忽略
+//
+// 参数：
+// - path: 环境变量文件路径
+//
+// 返回：
+// - map[string]string: 环境变量映射
+// - error: 加载错误（如果有）
 func loadEnvFile(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -97,36 +107,56 @@ func loadEnvFile(path string) (map[string]string, error) {
 	return envVars, nil
 }
 
-// ServerConnection represents a connection to an MCP server
+// ServerConnection MCP 服务器连接
+// 包含连接到 MCP 服务器所需的客户端和会话信息
 type ServerConnection struct {
-	Name    string
-	Client  *mcp.Client
-	Session *mcp.ClientSession
-	Tools   []*mcp.Tool
+	Name    string           // 服务器名称
+	Client  *mcp.Client      // MCP 客户端
+	Session *mcp.ClientSession // MCP 客户端会话
+	Tools   []*mcp.Tool      // 可用的工具列表
 }
 
-// Manager manages multiple MCP server connections
+// Manager MCP 管理器
+// 管理多个 MCP 服务器连接
 type Manager struct {
-	servers map[string]*ServerConnection
-	mu      sync.RWMutex
-	closed  atomic.Bool    // changed from bool to atomic.Bool to avoid TOCTOU race
-	wg      sync.WaitGroup // tracks in-flight CallTool calls
+	servers map[string]*ServerConnection  // 服务器连接映射
+	mu      sync.RWMutex                  // 保护 servers 映射的读写锁
+	closed  atomic.Bool                   // 管理器是否已关闭（原子操作避免竞态）
+	wg      sync.WaitGroup                // 跟踪进行中的 CallTool 调用
 }
 
-// NewManager creates a new MCP manager
+// NewManager 创建新的 MCP 管理器
+//
+// 返回：
+// - 初始化好的 Manager 指针
 func NewManager() *Manager {
 	return &Manager{
 		servers: make(map[string]*ServerConnection),
 	}
 }
 
-// LoadFromConfig loads MCP servers from configuration
+// LoadFromConfig 从配置加载 MCP 服务器
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - cfg: 全局配置
+//
+// 返回：
+// - error: 加载错误（如果有）
 func (m *Manager) LoadFromConfig(ctx context.Context, cfg *config.Config) error {
 	return m.LoadFromMCPConfig(ctx, cfg.Tools.MCP, cfg.WorkspacePath())
 }
 
-// LoadFromMCPConfig loads MCP servers from MCP configuration and workspace path.
-// This is the minimal dependency version that doesn't require the full Config object.
+// LoadFromMCPConfig 从 MCP 配置和工作空间路径加载 MCP 服务器
+// 这是最小依赖版本，不需要完整的 Config 对象
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - mcpCfg: MCP 配置
+// - workspacePath: 工作空间路径
+//
+// 返回：
+// - error: 加载错误（如果有）
 func (m *Manager) LoadFromMCPConfig(
 	ctx context.Context,
 	mcpCfg config.MCPConfig,
