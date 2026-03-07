@@ -1,3 +1,10 @@
+// Package skills 提供技能系统功能
+// 支持技能的加载、安装、搜索和注册
+// 技能来源包括：
+// - 工作空间技能 (~/.picoclaw/workspace/skills)
+// - 全局技能 (~/.picoclaw/skills)
+// - 内置技能 (项目 skills 目录)
+// - ClawHub 注册中心
 package skills
 
 import (
@@ -20,22 +27,30 @@ var (
 )
 
 const (
-	MaxNameLength        = 64
-	MaxDescriptionLength = 1024
+	MaxNameLength        = 64   // 最大技能名称长度
+	MaxDescriptionLength = 1024 // 最大描述长度
 )
 
+// SkillMetadata 技能元数据
+// 从 SKILL.md 文件的前置声明中解析
 type SkillMetadata struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string `json:"name"`        // 技能名称
+	Description string `json:"description"` // 技能描述
 }
 
+// SkillInfo 技能信息
+// 包含技能的完整元数据
 type SkillInfo struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Source      string `json:"source"`
-	Description string `json:"description"`
+	Name        string `json:"name"`        // 技能名称
+	Path        string `json:"path"`        // 技能路径
+	Source      string `json:"source"`      // 技能来源（workspace/global/builtin）
+	Description string `json:"description"` // 技能描述
 }
 
+// validate 验证技能信息的有效性
+//
+// 返回：
+// - error: 验证错误（如果有）
 func (info SkillInfo) validate() error {
 	var errs error
 	if info.Name == "" {
@@ -57,15 +72,20 @@ func (info SkillInfo) validate() error {
 	return errs
 }
 
+// SkillsLoader 技能加载器
+// 从多个来源加载技能：工作空间、全局、内置
 type SkillsLoader struct {
-	workspace       string
-	workspaceSkills string // workspace skills (project-level)
-	globalSkills    string // global skills (~/.picoclaw/skills)
-	builtinSkills   string // builtin skills
+	workspace       string  // 工作空间根目录
+	workspaceSkills string  // 工作空间技能目录 (project-level)
+	globalSkills    string  // 全局技能目录 (~/.picoclaw/skills)
+	builtinSkills   string  // 内置技能目录
 }
 
-// SkillRoots returns all unique skill root directories used by this loader.
-// The order follows resolution priority: workspace > global > builtin.
+// SkillRoots 返回此加载器使用的所有技能根目录
+// 顺序遵循解析优先级：workspace > global > builtin
+//
+// 返回：
+// - 技能根目录路径列表
 func (sl *SkillsLoader) SkillRoots() []string {
 	roots := []string{sl.workspaceSkills, sl.globalSkills, sl.builtinSkills}
 	seen := make(map[string]struct{}, len(roots))
@@ -87,6 +107,15 @@ func (sl *SkillsLoader) SkillRoots() []string {
 	return out
 }
 
+// NewSkillsLoader 创建新的技能加载器
+//
+// 参数：
+// - workspace: 工作空间根目录
+// - globalSkills: 全局技能目录
+// - builtinSkills: 内置技能目录
+//
+// 返回：
+// - 初始化好的 SkillsLoader 指针
 func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string) *SkillsLoader {
 	return &SkillsLoader{
 		workspace:       workspace,
@@ -96,6 +125,10 @@ func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string
 	}
 }
 
+// ListSkills 列出所有可用的技能
+//
+// 返回：
+// - SkillInfo 列表
 func (sl *SkillsLoader) ListSkills() []SkillInfo {
 	skills := make([]SkillInfo, 0)
 	seen := make(map[string]bool)

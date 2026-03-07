@@ -1,3 +1,4 @@
+// Package skills 提供技能系统功能（本文件实现技能安装器）
 package skills
 
 import (
@@ -13,16 +14,33 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
+// SkillInstaller 技能安装器
+// 负责将技能安装到工作空间
 type SkillInstaller struct {
-	workspace string
+	workspace string // 工作空间路径
 }
 
+// NewSkillInstaller 创建新的技能安装器
+//
+// 参数：
+// - workspace: 工作空间路径
+//
+// 返回：
+// - 初始化好的 SkillInstaller 指针
 func NewSkillInstaller(workspace string) *SkillInstaller {
 	return &SkillInstaller{
 		workspace: workspace,
 	}
 }
 
+// InstallFromGitHub 从 GitHub 安装技能
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - repo: GitHub 仓库路径（格式：owner/repo）
+//
+// 返回：
+// - error: 安装错误（如果有）
 func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) error {
 	skillDir := filepath.Join(si.workspace, "skills", filepath.Base(repo))
 

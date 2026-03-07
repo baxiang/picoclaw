@@ -1,3 +1,4 @@
+// Package skills 提供技能系统功能（本文件定义注册表接口）
 package skills
 
 import (
@@ -9,55 +10,55 @@ import (
 )
 
 const (
-	defaultMaxConcurrentSearches = 2
+	defaultMaxConcurrentSearches = 2 // 默认最大并发搜索数
 )
 
-// SearchResult represents a single result from a skill registry search.
+// SearchResult 技能注册表搜索结果
 type SearchResult struct {
-	Score        float64 `json:"score"`
-	Slug         string  `json:"slug"`
-	DisplayName  string  `json:"display_name"`
-	Summary      string  `json:"summary"`
-	Version      string  `json:"version"`
-	RegistryName string  `json:"registry_name"`
+	Score        float64 `json:"score"`        // 相关性分数
+	Slug         string  `json:"slug"`         // 技能标识符
+	DisplayName  string  `json:"display_name"` // 显示名称
+	Summary      string  `json:"summary"`      // 摘要
+	Version      string  `json:"version"`      // 版本
+	RegistryName string  `json:"registry_name"`// 注册表名称
 }
 
-// SkillMeta holds metadata about a skill from a registry.
+// SkillMeta 技能注册表中的技能元数据
 type SkillMeta struct {
-	Slug             string `json:"slug"`
-	DisplayName      string `json:"display_name"`
-	Summary          string `json:"summary"`
-	LatestVersion    string `json:"latest_version"`
-	IsMalwareBlocked bool   `json:"is_malware_blocked"`
-	IsSuspicious     bool   `json:"is_suspicious"`
-	RegistryName     string `json:"registry_name"`
+	Slug             string `json:"slug"`             // 技能标识符
+	DisplayName      string `json:"display_name"`     // 显示名称
+	Summary          string `json:"summary"`          // 摘要
+	LatestVersion    string `json:"latest_version"`   // 最新版本
+	IsMalwareBlocked bool   `json:"is_malware_blocked"`// 是否被恶意软件阻止
+	IsSuspicious     bool   `json:"is_suspicious"`    // 是否可疑
+	RegistryName     string `json:"registry_name"`    // 注册表名称
 }
 
-// InstallResult is returned by DownloadAndInstall to carry metadata
-// back to the caller for moderation and user messaging.
+// InstallResult 技能安装结果
+// 包含安装后的元数据，用于审核和用户消息
 type InstallResult struct {
-	Version          string
-	IsMalwareBlocked bool
-	IsSuspicious     bool
-	Summary          string
+	Version          string // 安装的版本
+	IsMalwareBlocked bool   // 是否被恶意软件阻止
+	IsSuspicious     bool   // 是否可疑
+	Summary          string // 摘要
 }
 
-// SkillRegistry is the interface that all skill registries must implement.
-// Each registry represents a different source of skills (e.g., clawhub.ai)
+// SkillRegistry 技能注册表接口
+// 所有技能注册表必须实现此接口
+// 每个注册表代表不同的技能来源（如 clawhub.ai）
 type SkillRegistry interface {
-	// Name returns the unique name of this registry (e.g., "clawhub").
+	// Name 返回注册表的唯一名称（如 "clawhub"）
 	Name() string
-	// Search searches the registry for skills matching the query.
+	// Search 搜索匹配查询的技能
 	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
-	// GetSkillMeta retrieves metadata for a specific skill by slug.
+	// GetSkillMeta 通过 slug 获取技能元数据
 	GetSkillMeta(ctx context.Context, slug string) (*SkillMeta, error)
-	// DownloadAndInstall fetches metadata, resolves the version, downloads and
-	// installs the skill to targetDir. Returns an InstallResult with metadata
-	// for the caller to use for moderation and user messaging.
+	// DownloadAndInstall 获取元数据、解析版本、下载并安装技能到 targetDir
+	// 返回 InstallResult 包含元数据供调用者用于审核和用户消息
 	DownloadAndInstall(ctx context.Context, slug, version, targetDir string) (*InstallResult, error)
 }
 
-// RegistryConfig holds configuration for all skill registries.
+// RegistryConfig 技能注册表配置
 // This is the input to NewRegistryManagerFromConfig.
 type RegistryConfig struct {
 	ClawHub               ClawHubConfig
