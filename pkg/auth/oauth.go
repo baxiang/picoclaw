@@ -226,18 +226,29 @@ func LoginBrowser(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	}
 }
 
+// callbackResult 回调结果结构
+// 用于接收 HTTP 回调或手动输入的结果
 type callbackResult struct {
-	code string
-	err  error
+	code string // 授权码
+	err  error  // 错误信息
 }
 
+// deviceCodeResponse 设备码响应（内部结构）
 type deviceCodeResponse struct {
-	DeviceAuthID string
-	UserCode     string
-	Interval     int
+	DeviceAuthID string // 设备认证 ID
+	UserCode     string // 用户代码
+	Interval     int    // 轮询间隔（秒）
 }
 
-// DeviceCodeInfo holds the device code information returned by the OAuth provider.
+// DeviceCodeInfo 设备码信息
+// 用于无头环境的 OAuth 认证流程
+// 用户在浏览器打开 URL 并输入代码完成认证
+//
+// 字段说明：
+// - DeviceAuthID: 设备认证 ID（用于轮询令牌状态）
+// - UserCode: 用户代码（用户在浏览器输入）
+// - VerifyURL: 验证 URL（用户打开此 URL 进行认证）
+// - Interval: 轮询间隔（秒）
 type DeviceCodeInfo struct {
 	DeviceAuthID string `json:"device_auth_id"`
 	UserCode     string `json:"user_code"`
@@ -245,8 +256,15 @@ type DeviceCodeInfo struct {
 	Interval     int    `json:"interval"`
 }
 
-// RequestDeviceCode requests a device code from the OAuth provider.
-// Returns the info needed for the user to authenticate in a browser.
+// RequestDeviceCode 从 OAuth 提供商请求设备码
+// 适用于无头环境（如 VPS、Docker 容器）
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+//
+// 返回：
+// - *DeviceCodeInfo: 设备码信息
+// - error: 请求错误
 func RequestDeviceCode(cfg OAuthProviderConfig) (*DeviceCodeInfo, error) {
 	reqBody, _ := json.Marshal(map[string]string{
 		"client_id": cfg.ClientID,
@@ -287,12 +305,21 @@ func RequestDeviceCode(cfg OAuthProviderConfig) (*DeviceCodeInfo, error) {
 	}, nil
 }
 
-// PollDeviceCodeOnce makes a single poll attempt to check if the user has authenticated.
-// Returns (credential, nil) on success, (nil, nil) if still pending, or (nil, err) on failure.
+// PollDeviceCodeOnce 轮询设备码认证状态（单次尝试）
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+// - deviceAuthID: 设备认证 ID
+// - userCode: 用户代码
+//
+// 返回：
+// - *AuthCredential: 认证成功返回凭证
+// - error: 认证错误
 func PollDeviceCodeOnce(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {
 	return pollDeviceCode(cfg, deviceAuthID, userCode)
 }
 
+// parseDeviceCodeResponse 解析设备码响应
 func parseDeviceCodeResponse(body []byte) (deviceCodeResponse, error) {
 	var raw struct {
 		DeviceAuthID string          `json:"device_auth_id"`
