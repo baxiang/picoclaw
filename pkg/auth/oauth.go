@@ -343,6 +343,14 @@ func parseDeviceCodeResponse(body []byte) (deviceCodeResponse, error) {
 	}, nil
 }
 
+// parseFlexibleInt 灵活解析整数（支持 JSON 数字和字符串）
+//
+// 参数：
+// - raw: JSON 原始数据
+//
+// 返回：
+// - int: 解析的整数值
+// - error: 解析错误
 func parseFlexibleInt(raw json.RawMessage) (int, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return 0, nil
@@ -365,6 +373,20 @@ func parseFlexibleInt(raw json.RawMessage) (int, error) {
 	return 0, fmt.Errorf("invalid integer value: %s", string(raw))
 }
 
+// LoginDeviceCode 通过设备码登录（无头环境）
+// 适用于无法打开浏览器的环境（VPS、Docker 等）
+// 流程：
+// 1. 请求设备码和用户代码
+// 2. 用户在其他设备打开 URL 并输入代码
+// 3. 轮询检查认证状态
+// 4. 认证成功后返回凭证
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+//
+// 返回：
+// - *AuthCredential: OAuth 凭证
+// - error: 登录错误
 func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	reqBody, _ := json.Marshal(map[string]string{
 		"client_id": cfg.ClientID,
@@ -423,6 +445,16 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	}
 }
 
+// pollDeviceCode 轮询设备码认证状态（内部方法）
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+// - deviceAuthID: 设备认证 ID
+// - userCode: 用户代码
+//
+// 返回：
+// - *AuthCredential: 认证成功返回凭证
+// - error: 认证错误
 func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {
 	reqBody, _ := json.Marshal(map[string]string{
 		"device_auth_id": deviceAuthID,
@@ -461,6 +493,16 @@ func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*Au
 	return ExchangeCodeForTokens(cfg, tokenResp.AuthorizationCode, tokenResp.CodeVerifier, redirectURI)
 }
 
+// RefreshAccessToken 刷新访问令牌
+// 使用刷新令牌获取新的访问令牌
+//
+// 参数：
+// - cred: 当前凭证（包含 RefreshToken）
+// - cfg: OAuth 提供商配置
+//
+// 返回：
+// - *AuthCredential: 刷新后的凭证
+// - error: 刷新错误
 func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCredential, error) {
 	if cred.RefreshToken == "" {
 		return nil, fmt.Errorf("no refresh token available")
@@ -514,10 +556,31 @@ func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCre
 	return refreshed, nil
 }
 
+// BuildAuthorizeURL 构建 OAuth 授权 URL（公开方法）
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+// - pkce: PKCE 代码
+// - state: CSRF 保护状态
+// - redirectURI: 重定向 URI
+//
+// 返回：
+// - string: 授权 URL
 func BuildAuthorizeURL(cfg OAuthProviderConfig, pkce PKCECodes, state, redirectURI string) string {
 	return buildAuthorizeURL(cfg, pkce, state, redirectURI)
 }
 
+// buildAuthorizeURL 构建 OAuth 授权 URL（内部方法）
+// 根据提供商不同构建不同的 URL 参数
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+// - pkce: PKCE 代码
+// - state: CSRF 保护状态
+// - redirectURI: 重定向 URI
+//
+// 返回：
+// - string: 授权 URL
 func buildAuthorizeURL(cfg OAuthProviderConfig, pkce PKCECodes, state, redirectURI string) string {
 	params := url.Values{
 		"response_type":         {"code"},
@@ -553,7 +616,18 @@ func buildAuthorizeURL(cfg OAuthProviderConfig, pkce PKCECodes, state, redirectU
 	return cfg.Issuer + "/oauth/authorize?" + params.Encode()
 }
 
-// ExchangeCodeForTokens exchanges an authorization code for tokens.
+// ExchangeCodeForTokens 用授权码交换令牌
+// OAuth 2.0 授权码流程的核心步骤
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+// - code: 授权码
+// - codeVerifier: PKCE 验证器
+// - redirectURI: 重定向 URI
+//
+// 返回：
+// - *AuthCredential: OAuth 凭证
+// - error: 交换错误
 func ExchangeCodeForTokens(cfg OAuthProviderConfig, code, codeVerifier, redirectURI string) (*AuthCredential, error) {
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -594,6 +668,16 @@ func ExchangeCodeForTokens(cfg OAuthProviderConfig, code, codeVerifier, redirect
 	return parseTokenResponse(body, provider)
 }
 
+// parseTokenResponse 解析令牌响应
+// 从 OAuth 令牌响应中提取访问令牌、刷新令牌等信息
+//
+// 参数：
+// - body: 响应体 JSON
+// - provider: 提供商名称
+//
+// 返回：
+// - *AuthCredential: OAuth 凭证
+// - error: 解析错误
 func parseTokenResponse(body []byte, provider string) (*AuthCredential, error) {
 	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
@@ -634,6 +718,14 @@ func parseTokenResponse(body []byte, provider string) (*AuthCredential, error) {
 	return cred, nil
 }
 
+// extractAccountID 从 JWT Token 中提取账户 ID
+// 支持多种 OpenAI JWT 声明格式
+//
+// 参数：
+// - token: JWT Token（access_token 或 id_token）
+//
+// 返回：
+// - string: 账户 ID（提取失败返回空字符串）
 func extractAccountID(token string) string {
 	claims, err := parseJWTClaims(token)
 	if err != nil {
@@ -667,6 +759,14 @@ func extractAccountID(token string) string {
 	return ""
 }
 
+// parseJWTClaims 解析 JWT Token 的 Claims
+//
+// 参数：
+// - token: JWT Token 字符串
+//
+// 返回：
+// - map[string]any: Claims 映射
+// - error: 解析错误
 func parseJWTClaims(token string) (map[string]any, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
@@ -694,12 +794,28 @@ func parseJWTClaims(token string) (map[string]any, error) {
 	return claims, nil
 }
 
+// base64URLDecode Base64URL 解码
+// 将 URL 安全的 Base64 字符串解码为字节切片
+//
+// 参数：
+// - s: Base64URL 编码字符串
+//
+// 返回：
+// - []byte: 解码后的字节
+// - error: 解码错误
 func base64URLDecode(s string) ([]byte, error) {
 	s = strings.NewReplacer("-", "+", "_", "/").Replace(s)
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// OpenBrowser opens the given URL in the user's default browser.
+// OpenBrowser 在用户默认浏览器中打开 URL
+// 支持 macOS、Linux、Windows 平台
+//
+// 参数：
+// - url: 要打开的 URL
+//
+// 返回：
+// - error: 打开错误（不支持的平台或命令失败）
 func OpenBrowser(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
