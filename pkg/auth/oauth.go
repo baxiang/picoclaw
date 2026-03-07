@@ -1,3 +1,6 @@
+// Package auth 提供 OAuth 认证和凭证管理功能
+// 本文件实现 OAuth 浏览器登录和设备码登录流程
+// 支持 OpenAI、Google Antigravity 等提供商
 package auth
 
 import (
@@ -20,16 +23,32 @@ import (
 	"time"
 )
 
+// OAuthProviderConfig OAuth 提供商配置
+// 包含 OAuth 2.0 授权码流程所需的所有参数
+//
+// 字段说明：
+// - Issuer: 授权服务器地址（如 https://auth.openai.com）
+// - ClientID: 客户端 ID（OAuth 应用标识）
+// - ClientSecret: 客户端密钥（Google 等需要，机密客户端）
+// - TokenURL: 令牌端点 URL（可选，覆盖默认端点）
+// - Scopes: 请求的权限范围（空格分隔）
+// - Originator: 发起者标识（OpenAI 特定参数）
+// - Port: 本地回调服务器监听端口
 type OAuthProviderConfig struct {
 	Issuer       string
 	ClientID     string
-	ClientSecret string // Required for Google OAuth (confidential client)
-	TokenURL     string // Override token endpoint (Google uses a different URL than issuer)
+	ClientSecret string // Google OAuth 需要（机密客户端）
+	TokenURL     string // 覆盖令牌端点（Google 使用不同的 URL）
 	Scopes       string
 	Originator   string
 	Port         int
 }
 
+// OpenAIOAuthConfig 返回 OpenAI OAuth 配置
+// 使用 Codex CLI 的客户端凭证
+//
+// 返回：
+// - OAuthProviderConfig: OpenAI OAuth 配置
 func OpenAIOAuthConfig() OAuthProviderConfig {
 	return OAuthProviderConfig{
 		Issuer:     "https://auth.openai.com",
@@ -40,10 +59,13 @@ func OpenAIOAuthConfig() OAuthProviderConfig {
 	}
 }
 
-// GoogleAntigravityOAuthConfig returns the OAuth configuration for Google Cloud Code Assist (Antigravity).
-// Client credentials are the same ones used by OpenCode/pi-ai for Cloud Code Assist access.
+// GoogleAntigravityOAuthConfig 返回 Google Cloud Code Assist (Antigravity) 的 OAuth 配置
+// 客户端凭证与 OpenCode/pi-ai 使用的相同
+//
+// 返回：
+// - OAuthProviderConfig: Google Antigravity OAuth 配置
 func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
-	// These are the same client credentials used by the OpenCode antigravity plugin.
+	// 这些凭证与 OpenCode antigravity 插件使用的相同
 	clientID := decodeBase64(
 		"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
 	)
@@ -58,6 +80,14 @@ func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
 	}
 }
 
+// decodeBase64 解码 Base64 字符串
+// 如果解码失败，返回原始字符串
+//
+// 参数：
+// - s: Base64 编码的字符串
+//
+// 返回：
+// - string: 解码后的字符串
 func decodeBase64(s string) string {
 	data, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
@@ -66,7 +96,11 @@ func decodeBase64(s string) string {
 	return string(data)
 }
 
-// GenerateState generates a random state string for OAuth CSRF protection.
+// GenerateState 生成随机 state 字符串用于 OAuth CSRF 保护
+//
+// 返回：
+// - string: 随机 state 字符串
+// - error: 生成错误
 func GenerateState() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
@@ -75,6 +109,22 @@ func GenerateState() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// LoginBrowser 通过浏览器进行 OAuth 登录
+// 启动本地 HTTP 服务器接收回调，支持无头环境手动粘贴授权码
+//
+// 流程：
+// 1. 生成 PKCE 代码和 state
+// 2. 构建授权 URL 并打开浏览器
+// 3. 启动本地回调服务器监听 /auth/callback
+// 4. 等待回调或用户手动粘贴授权码
+// 5. 用授权码交换令牌
+//
+// 参数：
+// - cfg: OAuth 提供商配置
+//
+// 返回：
+// - *AuthCredential: OAuth 凭证
+// - error: 登录错误
 func LoginBrowser(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	pkce, err := GeneratePKCE()
 	if err != nil {
