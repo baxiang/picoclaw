@@ -1,3 +1,6 @@
+// Package devices 提供设备热插拔检测功能
+// 支持 USB 设备检测（Linux）
+// 未来可扩展支持蓝牙、PCI 等设备
 package devices
 
 import (
@@ -14,6 +17,17 @@ import (
 	"github.com/sipeed/picoclaw/pkg/state"
 )
 
+// Service 设备事件服务
+// 监控设备热插拔事件并发布到消息总线
+//
+// 字段说明：
+// - bus: 消息总线
+// - state: 状态管理器
+// - sources: 事件源列表（USB、蓝牙等）
+// - enabled: 是否启用
+// - ctx: 上下文
+// - cancel: 取消函数
+// - mu: 保护并发访问的读写锁
 type Service struct {
 	bus     *bus.MessageBus
 	state   *state.Manager
@@ -24,12 +38,21 @@ type Service struct {
 	mu      sync.RWMutex
 }
 
+// Config 设备监控配置
 type Config struct {
-	Enabled    bool
-	MonitorUSB bool // When true, monitor USB hotplug (Linux only)
-	// Future: MonitorBluetooth, MonitorPCI, etc.
+	Enabled    bool // 是否启用
+	MonitorUSB bool // 监控 USB 热插拔（仅 Linux）
+	// 未来扩展：MonitorBluetooth（蓝牙）, MonitorPCI（PCI）等
 }
 
+// NewService 创建新的设备事件服务
+//
+// 参数：
+// - cfg: 配置
+// - stateMgr: 状态管理器
+//
+// 返回：
+// - *Service: 设备事件服务
 func NewService(cfg Config, stateMgr *state.Manager) *Service {
 	s := &Service{
 		state:   stateMgr,
@@ -44,12 +67,24 @@ func NewService(cfg Config, stateMgr *state.Manager) *Service {
 	return s
 }
 
+// SetBus 设置消息总线
+//
+// 参数：
+// - msgBus: 消息总线
 func (s *Service) SetBus(msgBus *bus.MessageBus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bus = msgBus
 }
 
+// Start 启动设备事件服务
+// 启动所有配置的事件源并开始监控
+//
+// 参数：
+// - ctx: 上下文
+//
+// 返回：
+// - error: 启动错误
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,6 +115,8 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop 停止设备事件服务
+// 停止所有事件源并清理资源
 func (s *Service) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,6 +133,12 @@ func (s *Service) Stop() {
 	logger.InfoC("devices", "Device event service stopped")
 }
 
+// handleEvents 处理设备事件
+// 将设备事件转换为入站消息并发布到消息总线
+//
+// 参数：
+// - kind: 事件类型（USB、蓝牙等）
+// - eventCh: 事件通道
 func (s *Service) handleEvents(kind events.Kind, eventCh <-chan *events.DeviceEvent) {
 	for ev := range eventCh {
 		if ev == nil {
