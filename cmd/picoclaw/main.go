@@ -4,6 +4,17 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package main PicoClaw 主程序入口
+// 提供命令行界面，支持以下子命令：
+// - onboard: 初始化配置
+// - agent: 直接对话
+// - gateway: 启动网关服务
+// - auth: OAuth 认证
+// - cron: 定时任务
+// - migrate: 数据迁移
+// - skills: 技能管理
+// - status: 状态查询
+// - version: 版本信息
 package main
 
 import (
@@ -24,6 +35,10 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/version"
 )
 
+// NewPicoclawCommand 创建 PicoClaw 根命令
+//
+// 返回：
+// - *cobra.Command: PicoClaw 根命令
 func NewPicoclawCommand() *cobra.Command {
 	short := fmt.Sprintf("%s picoclaw - Personal AI Assistant v%s\n\n", internal.Logo, internal.GetVersion())
 
@@ -61,6 +76,8 @@ const (
 		"\033[0m\r\n"
 )
 
+// main PicoClaw 主函数
+// 显示欢迎横幅并执行根命令
 func main() {
 	fmt.Printf("%s", banner)
 	cmd := NewPicoclawCommand()
