@@ -1,3 +1,5 @@
+// Package routing 提供消息路由功能
+// 本文件实现会话键构建和解析
 package routing
 
 import (
@@ -5,44 +7,59 @@ import (
 	"strings"
 )
 
-// DMScope controls DM session isolation granularity.
+// DMScope 直接消息会话隔离粒度
 type DMScope string
 
 const (
-	DMScopeMain                  DMScope = "main"
-	DMScopePerPeer               DMScope = "per-peer"
-	DMScopePerChannelPeer        DMScope = "per-channel-peer"
-	DMScopePerAccountChannelPeer DMScope = "per-account-channel-peer"
+	DMScopeMain                  DMScope = "main"                   // 主会话（共享）
+	DMScopePerPeer               DMScope = "per-peer"               // 每对等方独立会话
+	DMScopePerChannelPeer        DMScope = "per-channel-peer"       // 每渠道 + 对等方独立会话
+	DMScopePerAccountChannelPeer DMScope = "per-account-channel-peer" // 每账户 + 渠道 + 对等方独立会话
 )
 
-// RoutePeer represents a chat peer with kind and ID.
+// RoutePeer 路由对等方
+// 表示聊天的类型和标识符
 type RoutePeer struct {
-	Kind string // "direct", "group", "channel"
-	ID   string
+	Kind string // "direct"（直接消息）, "group"（群聊）, "channel"（频道）
+	ID   string // 对等方 ID
 }
 
-// SessionKeyParams holds all inputs for session key construction.
+// SessionKeyParams 会话键构建参数
 type SessionKeyParams struct {
-	AgentID       string
-	Channel       string
-	AccountID     string
-	Peer          *RoutePeer
-	DMScope       DMScope
-	IdentityLinks map[string][]string
+	AgentID       string            // 代理 ID
+	Channel       string            // 渠道名称
+	AccountID     string            // 账户 ID
+	Peer          *RoutePeer        // 路由对等方
+	DMScope       DMScope           // DM 会话隔离粒度
+	IdentityLinks map[string][]string // 身份链接（跨平台映射）
 }
 
-// ParsedSessionKey is the result of parsing an agent-scoped session key.
+// ParsedSessionKey 解析后的会话键
 type ParsedSessionKey struct {
-	AgentID string
-	Rest    string
+	AgentID string // 代理 ID
+	Rest    string // 剩余部分
 }
 
-// BuildAgentMainSessionKey returns "agent:<agentId>:main".
+// BuildAgentMainSessionKey 构建代理主会话键
+// 格式："agent:<agentId>:main"
+//
+// 参数：
+// - agentID: 代理 ID
+//
+// 返回：
+// - string: 主会话键
 func BuildAgentMainSessionKey(agentID string) string {
 	return fmt.Sprintf("agent:%s:%s", NormalizeAgentID(agentID), DefaultMainKey)
 }
 
-// BuildAgentPeerSessionKey constructs a session key based on agent, channel, peer, and DM scope.
+// BuildAgentPeerSessionKey 构建代理对等方会话键
+// 根据代理、渠道、对等方和 DM 作用域构建
+//
+// 参数：
+// - params: 会话键参数
+//
+// 返回：
+// - string: 会话键
 func BuildAgentPeerSessionKey(params SessionKeyParams) string {
 	agentID := NormalizeAgentID(params.AgentID)
 
@@ -99,7 +116,14 @@ func BuildAgentPeerSessionKey(params SessionKeyParams) string {
 	return fmt.Sprintf("agent:%s:%s:%s:%s", agentID, channel, peerKind, peerID)
 }
 
-// ParseAgentSessionKey extracts agentId and rest from "agent:<agentId>:<rest>".
+// ParseAgentSessionKey 解析代理会话键
+// 从 "agent:<agentId>:<rest>" 格式中提取 agentId 和 rest
+//
+// 参数：
+// - sessionKey: 会话键字符串
+//
+// 返回：
+// - *ParsedSessionKey: 解析结果（无效返回 nil）
 func ParseAgentSessionKey(sessionKey string) *ParsedSessionKey {
 	raw := strings.TrimSpace(sessionKey)
 	if raw == "" {
@@ -120,7 +144,13 @@ func ParseAgentSessionKey(sessionKey string) *ParsedSessionKey {
 	return &ParsedSessionKey{AgentID: agentID, Rest: rest}
 }
 
-// IsSubagentSessionKey returns true if the session key represents a subagent.
+// IsSubagentSessionKey 检查会话键是否为子代理会话键
+//
+// 参数：
+// - sessionKey: 会话键字符串
+//
+// 返回：
+// - bool: true 表示是子代理会话键
 func IsSubagentSessionKey(sessionKey string) bool {
 	raw := strings.TrimSpace(sessionKey)
 	if raw == "" {
