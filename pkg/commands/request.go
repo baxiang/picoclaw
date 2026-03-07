@@ -5,22 +5,42 @@ import (
 	"strings"
 )
 
+// Handler 命令处理器函数类型
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - req: 命令请求
+// - rt: 运行时依赖
+//
+// 返回：
+// - error: 执行错误（如果有）
 type Handler func(ctx context.Context, req Request, rt *Runtime) error
 
+// Request 命令请求结构
+// 包含执行命令所需的所有上下文信息
 type Request struct {
-	Channel  string
-	ChatID   string
-	SenderID string
-	Text     string
-	Reply    func(text string) error
+	Channel  string                 // 渠道名称
+	ChatID   string                 // 聊天标识符
+	SenderID string                 // 发送者 ID
+	Text     string                 // 原始命令文本
+	Reply    func(text string) error // 回复函数
 }
 
 const unavailableMsg = "Command unavailable in current context."
 
+// commandPrefixes 支持的命令前缀列表
 var commandPrefixes = []string{"/", "!"}
 
-// parseCommandName accepts "/name", "!name", and Telegram's "/name@bot", then
-// normalizes to lowercase command names.
+// parseCommandName 解析命令名称
+// 接受 "/name"、"!name" 和 Telegram 的 "/name@bot" 格式
+// 然后标准化为小写命令名称
+//
+// 参数：
+// - input: 输入文本
+//
+// 返回：
+// - string: 命令名称
+// - bool: 是否成功解析
 func parseCommandName(input string) (string, bool) {
 	token := nthToken(input, 0)
 	if token == "" {

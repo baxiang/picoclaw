@@ -1,9 +1,11 @@
 package commands
 
-// BuiltinDefinitions returns all built-in command definitions.
-// Each command group is defined in its own cmd_*.go file.
-// Definitions are stateless — runtime dependencies are provided
-// via the Runtime parameter passed to handlers at execution time.
+// BuiltinDefinitions 返回所有内置命令定义
+// 每个命令组都在各自的 cmd_*.go 文件中定义
+// 定义是无状态的——运行时依赖通过执行时传入的 Runtime 参数提供
+//
+// 返回：
+// - 内置命令定义列表
 func BuiltinDefinitions() []Definition {
 	return []Definition{
 		startCommand(),

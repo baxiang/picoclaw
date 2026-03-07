@@ -5,33 +5,52 @@ import (
 	"fmt"
 )
 
+// Outcome 命令执行结果类型
 type Outcome int
 
 const (
-	// OutcomePassthrough means this input should continue through normal agent flow.
+	// OutcomePassthrough 表示输入应该继续通过正常的 agent 流程处理
 	OutcomePassthrough Outcome = iota
-	// OutcomeHandled means a command handler executed (with or without handler error).
+	// OutcomeHandled 表示命令处理器已执行（无论是否有错误）
 	OutcomeHandled
 )
 
+// ExecuteResult 命令执行结果
 type ExecuteResult struct {
-	Outcome Outcome
-	Command string
-	Err     error
+	Outcome Outcome  // 执行结果类型
+	Command string   // 执行的命令名称
+	Err     error    // 执行错误（如果有）
 }
 
+// Executor 命令执行器
+// 负责根据注册表和运行时执行命令
 type Executor struct {
-	reg *Registry
-	rt  *Runtime
+	reg *Registry  // 命令注册表
+	rt  *Runtime   // 运行时依赖
 }
 
+// NewExecutor 创建命令执行器
+//
+// 参数：
+// - reg: 命令注册表
+// - rt: 运行时依赖
+//
+// 返回：
+// - 初始化好的 Executor 指针
 func NewExecutor(reg *Registry, rt *Runtime) *Executor {
 	return &Executor{reg: reg, rt: rt}
 }
 
-// Execute implements a two-state command decision:
-// 1) handled: execute command immediately;
-// 2) passthrough: not a command or intentionally deferred to agent logic.
+// Execute 执行两阶段命令决策：
+// 1) handled: 立即执行命令
+// 2) passthrough: 不是命令或故意延迟到 agent 逻辑处理
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - req: 命令请求
+//
+// 返回：
+// - ExecuteResult: 执行结果
 func (e *Executor) Execute(ctx context.Context, req Request) ExecuteResult {
 	cmdName, ok := parseCommandName(req.Text)
 	if !ok {
