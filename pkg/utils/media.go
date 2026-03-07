@@ -1,3 +1,5 @@
+// Package utils 提供通用工具函数
+// 本文件包含媒体文件处理工具
 package utils
 
 import (
@@ -14,7 +16,15 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
-// IsAudioFile checks if a file is an audio file based on its filename extension and content type.
+// IsAudioFile 检查文件是否为音频文件
+// 基于文件扩展名和 MIME 类型判断
+//
+// 参数：
+// - filename: 文件名
+// - contentType: MIME 内容类型
+//
+// 返回：
+// - bool: true 表示是音频文件
 func IsAudioFile(filename, contentType string) bool {
 	audioExtensions := []string{".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma"}
 	audioTypes := []string{"audio/", "application/ogg", "application/x-ogg"}
@@ -34,13 +44,20 @@ func IsAudioFile(filename, contentType string) bool {
 	return false
 }
 
-// SanitizeFilename removes potentially dangerous characters from a filename
-// and returns a safe version for local filesystem storage.
+// SanitizeFilename 清理文件名中的危险字符
+// 返回安全的本地文件系统存储版本
+// 移除路径遍历攻击字符（..、/、\）
+//
+// 参数：
+// - filename: 原始文件名
+//
+// 返回：
+// - string: 清理后的安全文件名
 func SanitizeFilename(filename string) string {
-	// Get the base filename without path
+	// 获取基本文件名（不含路径）
 	base := filepath.Base(filename)
 
-	// Remove any directory traversal attempts
+	// 移除任何目录遍历尝试
 	base = strings.ReplaceAll(base, "..", "")
 	base = strings.ReplaceAll(base, "/", "_")
 	base = strings.ReplaceAll(base, "\\", "_")
@@ -48,18 +65,26 @@ func SanitizeFilename(filename string) string {
 	return base
 }
 
-// DownloadOptions holds optional parameters for downloading files
+// DownloadOptions 下载选项结构
 type DownloadOptions struct {
-	Timeout      time.Duration
-	ExtraHeaders map[string]string
-	LoggerPrefix string
-	ProxyURL     string
+	Timeout      time.Duration   // 超时时间
+	ExtraHeaders map[string]string // 额外头部
+	LoggerPrefix string          // 日志前缀
+	ProxyURL     string          // 代理 URL
 }
 
-// DownloadFile downloads a file from URL to a local temp directory.
-// Returns the local file path or empty string on error.
+// DownloadFile 从 URL 下载文件到本地临时目录
+// 返回本地文件路径，错误时返回空字符串
+//
+// 参数：
+// - urlStr: 下载 URL
+// - filename: 目标文件名
+// - opts: 下载选项
+//
+// 返回：
+// - string: 本地文件路径（空表示错误）
 func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
-	// Set defaults
+	// 设置默认值
 	if opts.Timeout == 0 {
 		opts.Timeout = 60 * time.Second
 	}
@@ -75,11 +100,11 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 
-	// Generate unique filename with UUID prefix to prevent conflicts
+	// 生成带 UUID 前缀的唯一文件名，防止冲突
 	safeName := SanitizeFilename(filename)
 	localPath := filepath.Join(mediaDir, uuid.New().String()[:8]+"_"+safeName)
 
-	// Create HTTP request
+	// 创建 HTTP 请求
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create download request", map[string]any{
@@ -88,7 +113,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 
-	// Add extra headers (e.g., Authorization for Slack)
+	// 添加额外头部（如 Slack 的 Authorization）
 	for key, value := range opts.ExtraHeaders {
 		req.Header.Set(key, value)
 	}
@@ -150,7 +175,14 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	return localPath
 }
 
-// DownloadFileSimple is a simplified version of DownloadFile without options
+// DownloadFileSimple 简化版文件下载（无选项）
+//
+// 参数：
+// - url: 下载 URL
+// - filename: 目标文件名
+//
+// 返回：
+// - string: 本地文件路径
 func DownloadFileSimple(url, filename string) string {
 	return DownloadFile(url, filename, DownloadOptions{
 		LoggerPrefix: "media",
