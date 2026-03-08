@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现 I2C 总线工具
+// 用于读取传感器和控制外设（仅 Linux）
 package tools
 
 import (
@@ -9,9 +12,14 @@ import (
 	"runtime"
 )
 
-// I2CTool provides I2C bus interaction for reading sensors and controlling peripherals.
+// I2CTool I2C 总线工具
+// 提供 I2C 总线交互功能，用于读取传感器和控制外设
 type I2CTool struct{}
 
+// NewI2CTool 创建新的 I2C 工具
+//
+// 返回：
+// - *I2CTool: I2C 工具
 func NewI2CTool() *I2CTool {
 	return &I2CTool{}
 }

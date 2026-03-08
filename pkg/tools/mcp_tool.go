@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现 MCP（Model Context Protocol）工具
+// 允许通过 MCP 协议连接外部服务器扩展工具能力
 package tools
 
 import (
@@ -10,8 +13,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCPManager defines the interface for MCP manager operations
-// This allows for easier testing with mock implementations
+// MCPManager MCP 管理器接口
+// 定义 MCP 操作的接口，便于使用 mock 实现进行测试
 type MCPManager interface {
 	CallTool(
 		ctx context.Context,
@@ -20,14 +23,23 @@ type MCPManager interface {
 	) (*mcp.CallToolResult, error)
 }
 
-// MCPTool wraps an MCP tool to implement the Tool interface
+// MCPTool MCP 工具包装器
+// 包装 MCP 工具以实现 Tool 接口
 type MCPTool struct {
-	manager    MCPManager
-	serverName string
-	tool       *mcp.Tool
+	manager    MCPManager // MCP 管理器
+	serverName string     // 服务器名称
+	tool       *mcp.Tool  // MCP 工具
 }
 
-// NewMCPTool creates a new MCP tool wrapper
+// NewMCPTool 创建新的 MCP 工具包装器
+//
+// 参数：
+// - manager: MCP 管理器
+// - serverName: 服务器名称
+// - tool: MCP 工具
+//
+// 返回：
+// - *MCPTool: MCP 工具包装器
 func NewMCPTool(manager MCPManager, serverName string, tool *mcp.Tool) *MCPTool {
 	return &MCPTool{
 		manager:    manager,

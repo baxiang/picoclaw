@@ -1,8 +1,10 @@
 //go:build !linux
 
+// Package tools 提供 AI 工具的实现
+// 本文件是 I2C 工具的非 Linux 平台存根实现
 package tools
 
-// scan is a stub for non-Linux platforms.
+// scan 扫描 I2C 设备（非 Linux 平台存根）
 func (t *I2CTool) scan(args map[string]any) *ToolResult {
 	return ErrorResult("I2C is only supported on Linux")
 }

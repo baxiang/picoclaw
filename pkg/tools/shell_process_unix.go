@@ -1,5 +1,7 @@
 //go:build !windows
 
+// Package tools 提供 AI 工具的实现
+// 本文件实现 Unix 平台的 Shell 进程管理
 package tools
 
 import (
@@ -7,6 +9,8 @@ import (
 	"syscall"
 )
 
+// prepareCommandForTermination 为命令终止做准备
+// 设置进程组标志，以便可以终止整个进程树
 func prepareCommandForTermination(cmd *exec.Cmd) {
 	if cmd == nil {
 		return

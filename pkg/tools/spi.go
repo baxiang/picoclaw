@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现 SPI 总线工具
+// 用于高速外设通信（仅 Linux）
 package tools
 
 import (
@@ -9,9 +12,14 @@ import (
 	"runtime"
 )
 
-// SPITool provides SPI bus interaction for high-speed peripheral communication.
+// SPITool SPI 总线工具
+// 提供 SPI 总线交互功能，用于高速外设通信
 type SPITool struct{}
 
+// NewSPITool 创建新的 SPI 工具
+//
+// 返回：
+// - *SPITool: SPI 工具
 func NewSPITool() *SPITool {
 	return &SPITool{}
 }
