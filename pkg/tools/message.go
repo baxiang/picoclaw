@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现消息发送工具（message）
+// 用于 AI 主动向用户发送消息
 package tools
 
 import (
@@ -6,13 +9,32 @@ import (
 	"sync/atomic"
 )
 
+// SendCallback 发送回调函数类型
+//
+// 参数：
+// - channel: 渠道名称
+// - chatID: 聊天 ID
+// - content: 消息内容
+//
+// 返回：
+// - error: 发送错误
 type SendCallback func(channel, chatID, content string) error
 
+// MessageTool 消息发送工具
+// 用于 AI 主动向用户发送消息
+//
+// 字段说明：
+// - sendCallback: 发送回调函数
+// - sentInRound: 原子标志，跟踪当前处理轮次是否已发送消息
 type MessageTool struct {
 	sendCallback SendCallback
-	sentInRound  atomic.Bool // Tracks whether a message was sent in the current processing round
+	sentInRound  atomic.Bool // 跟踪当前处理轮次是否已发送
 }
 
+// NewMessageTool 创建新的消息工具
+//
+// 返回：
+// - *MessageTool: 消息工具实例
 func NewMessageTool() *MessageTool {
 	return &MessageTool{}
 }

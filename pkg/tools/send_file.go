@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现文件发送工具（send_file）
+// 允许 LLM 通过 MediaStore 管道发送本地文件（图片、文档等）给用户
 package tools
 
 import (
@@ -14,8 +17,16 @@ import (
 	"github.com/sipeed/picoclaw/pkg/media"
 )
 
-// SendFileTool allows the LLM to send a local file (image, document, etc.)
-// to the user on the current chat channel via the MediaStore pipeline.
+// SendFileTool 文件发送工具
+// 允许 LLM 通过 MediaStore 管道发送本地文件给用户
+//
+// 字段说明：
+// - workspace: 工作空间路径
+// - restrict: 是否限制在工作空间内
+// - maxFileSize: 最大文件大小限制
+// - mediaStore: 媒体存储
+// - defaultChannel: 默认渠道
+// - defaultChatID: 默认聊天 ID
 type SendFileTool struct {
 	workspace   string
 	restrict    bool
@@ -26,6 +37,16 @@ type SendFileTool struct {
 	defaultChatID  string
 }
 
+// NewSendFileTool 创建新的文件发送工具
+//
+// 参数：
+// - workspace: 工作空间路径
+// - restrict: 是否限制在工作空间内
+// - maxFileSize: 最大文件大小（0 使用默认值）
+// - store: 媒体存储
+//
+// 返回：
+// - *SendFileTool: 文件发送工具
 func NewSendFileTool(workspace string, restrict bool, maxFileSize int, store media.MediaStore) *SendFileTool {
 	if maxFileSize <= 0 {
 		maxFileSize = config.DefaultMaxMediaSize

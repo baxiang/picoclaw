@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现定时任务工具（cron）
+// 支持创建提醒、周期性任务和系统命令调度
 package tools
 
 import (
@@ -12,12 +15,20 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
-// JobExecutor is the interface for executing cron jobs through the agent
+// JobExecutor 任务执行器接口
+// 用于通过 agent 执行 cron 任务
 type JobExecutor interface {
 	ProcessDirectWithChannel(ctx context.Context, content, sessionKey, channel, chatID string) (string, error)
 }
 
-// CronTool provides scheduling capabilities for the agent
+// CronTool 定时任务工具
+// 为 agent 提供调度能力
+//
+// 字段说明：
+// - cronService: cron 服务
+// - executor: 任务执行器
+// - msgBus: 消息总线
+// - execTool: Shell 执行工具（用于执行命令）
 type CronTool struct {
 	cronService *cron.CronService
 	executor    JobExecutor
@@ -25,8 +36,20 @@ type CronTool struct {
 	execTool    *ExecTool
 }
 
-// NewCronTool creates a new CronTool
-// execTimeout: 0 means no timeout, >0 sets the timeout duration
+// NewCronTool 创建新的定时任务工具
+//
+// 参数：
+// - cronService: cron 服务
+// - executor: 任务执行器
+// - msgBus: 消息总线
+// - workspace: 工作空间路径
+// - restrict: 是否限制在工作空间内
+// - execTimeout: 执行超时（0 表示无超时）
+// - config: 配置
+//
+// 返回：
+// - *CronTool: 定时任务工具
+// - error: 创建错误
 func NewCronTool(
 	cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus, workspace string, restrict bool,
 	execTimeout time.Duration, config *config.Config,
