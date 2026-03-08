@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现 Codex 提供商（OpenAI 编程助手）
 package providers
 
 import (
@@ -16,19 +18,28 @@ import (
 )
 
 const (
-	codexDefaultModel        = "gpt-5.2"
-	codexDefaultInstructions = "You are Codex, a coding assistant."
+	codexDefaultModel        = "gpt-5.2" // 默认 Codex 模型
+	codexDefaultInstructions = "You are Codex, a coding assistant." // 默认指令
 )
 
+// CodexProvider Codex 提供商
 type CodexProvider struct {
 	client          *openai.Client
 	accountID       string
-	tokenSource     func() (string, string, error)
+	tokenSource     func() (string, string, error) // Token 源函数
 	enableWebSearch bool
 }
 
 const defaultCodexInstructions = "You are Codex, a coding assistant."
 
+// NewCodexProvider 创建新的 Codex 提供商
+//
+// 参数：
+// - token: API Token
+// - accountID: 账户 ID
+//
+// 返回：
+// - *CodexProvider: Codex 提供商
 func NewCodexProvider(token, accountID string) *CodexProvider {
 	opts := []option.RequestOption{
 		option.WithBaseURL("https://chatgpt.com/backend-api/codex"),

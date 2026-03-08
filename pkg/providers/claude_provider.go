@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现 Claude 提供商（基于 Anthropic API）
 package providers
 
 import (
@@ -7,10 +9,19 @@ import (
 	anthropicprovider "github.com/sipeed/picoclaw/pkg/providers/anthropic"
 )
 
+// ClaudeProvider Claude 提供商
+// 基于 anthropicprovider.Provider 的包装
 type ClaudeProvider struct {
-	delegate *anthropicprovider.Provider
+	delegate *anthropicprovider.Provider // 委托的 Anthropic 提供商
 }
 
+// NewClaudeProvider 创建新的 Claude 提供商
+//
+// 参数：
+// - token: API Token
+//
+// 返回：
+// - *ClaudeProvider: Claude 提供商
 func NewClaudeProvider(token string) *ClaudeProvider {
 	return &ClaudeProvider{
 		delegate: anthropicprovider.NewProvider(token),

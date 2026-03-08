@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现 GitHub Copilot 提供商
 package providers
 
 import (
@@ -9,9 +11,10 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 )
 
+// GitHubCopilotProvider GitHub Copilot 提供商
 type GitHubCopilotProvider struct {
 	uri         string
-	connectMode string // "stdio" or "grpc"
+	connectMode string // "stdio" 或 "grpc"
 
 	client  *copilot.Client
 	session *copilot.Session
@@ -19,6 +22,16 @@ type GitHubCopilotProvider struct {
 	mu sync.Mutex
 }
 
+// NewGitHubCopilotProvider 创建新的 GitHub Copilot 提供商
+//
+// 参数：
+// - uri: CLI URL
+// - connectMode: 连接模式（"stdio" 或 "grpc"）
+// - model: 模型名称
+//
+// 返回：
+// - *GitHubCopilotProvider: GitHub Copilot 提供商
+// - error: 创建错误
 func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*GitHubCopilotProvider, error) {
 	if connectMode == "" {
 		connectMode = "grpc"
