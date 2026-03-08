@@ -1,3 +1,5 @@
+// Package openai_compat 提供 OpenAI 兼容 API 的提供商实现
+// 支持 OpenAI、Groq、Zhipu 等兼容 OpenAI API 的提供商
 package openai_compat
 
 import (
@@ -15,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
 
+// 类型别名，从 protocoltypes 导入
 type (
 	ToolCall               = protocoltypes.ToolCall
 	FunctionCall           = protocoltypes.FunctionCall
@@ -28,17 +31,20 @@ type (
 	ReasoningDetail        = protocoltypes.ReasoningDetail
 )
 
+// Provider OpenAI 兼容 API 提供商
 type Provider struct {
 	apiKey         string
 	apiBase        string
-	maxTokensField string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	maxTokensField string // 最大令牌字段名（如 o1/glm 模型的"max_completion_tokens"）
 	httpClient     *http.Client
 }
 
+// Option 提供商配置选项函数类型
 type Option func(*Provider)
 
-const defaultRequestTimeout = 120 * time.Second
+const defaultRequestTimeout = 120 * time.Second // 默认请求超时
 
+// WithMaxTokensField 设置最大令牌字段名选项
 func WithMaxTokensField(maxTokensField string) Option {
 	return func(p *Provider) {
 		p.maxTokensField = maxTokensField

@@ -1,3 +1,5 @@
+// Package anthropicprovider 提供 Anthropic Claude API 的提供商实现
+// 支持 Claude 系列模型，包括思考功能（Thinking）
 package anthropicprovider
 
 import (
@@ -13,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
 
+// 类型别名，从 protocoltypes 导入
 type (
 	ToolCall               = protocoltypes.ToolCall
 	FunctionCall           = protocoltypes.FunctionCall
@@ -24,19 +27,27 @@ type (
 )
 
 const (
-	defaultBaseURL      = "https://api.anthropic.com"
-	anthropicBetaHeader = "oauth-2025-04-20"
+	defaultBaseURL      = "https://api.anthropic.com" // 默认 API 地址
+	anthropicBetaHeader = "oauth-2025-04-20"          // OAuth Beta 版本头
 )
 
+// Provider Anthropic Claude 提供商
 type Provider struct {
 	client      *anthropic.Client
-	tokenSource func() (string, error)
-	baseURL     string
+	tokenSource func() (string, error) // Token 源函数（可选）
+	baseURL     string                 // API 基础 URL
 }
 
-// SupportsThinking implements providers.ThinkingCapable.
+// SupportsThinking 返回是否支持思考功能
 func (p *Provider) SupportsThinking() bool { return true }
 
+// NewProvider 创建新的 Anthropic 提供商
+//
+// 参数：
+// - token: API Token
+//
+// 返回：
+// - *Provider: Anthropic 提供商
 func NewProvider(token string) *Provider {
 	return NewProviderWithBaseURL(token, "")
 }

@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现提供商工厂函数，根据配置创建对应的提供商实例
 package providers
 
 import (
@@ -12,29 +14,33 @@ const defaultAnthropicAPIBase = "https://api.anthropic.com/v1"
 
 var getCredential = auth.GetCredential
 
+// providerType 提供商类型枚举
 type providerType int
 
 const (
-	providerTypeHTTPCompat providerType = iota
-	providerTypeClaudeAuth
-	providerTypeCodexAuth
-	providerTypeCodexCLIToken
-	providerTypeClaudeCLI
-	providerTypeCodexCLI
-	providerTypeGitHubCopilot
+	providerTypeHTTPCompat providerType = iota // HTTP 兼容提供商
+	providerTypeClaudeAuth                      // Claude OAuth 提供商
+	providerTypeCodexAuth                       // Codex OAuth 提供商
+	providerTypeCodexCLIToken                   // Codex CLI Token 提供商
+	providerTypeClaudeCLI                       // Claude CLI 提供商
+	providerTypeCodexCLI                        // Codex CLI 提供商
+	providerTypeGitHubCopilot                   // GitHub Copilot 提供商
 )
 
+// providerSelection 提供商选择配置
 type providerSelection struct {
-	providerType    providerType
-	apiKey          string
-	apiBase         string
-	proxy           string
-	model           string
-	workspace       string
-	connectMode     string
-	enableWebSearch bool
+	providerType    providerType // 提供商类型
+	apiKey          string       // API Key
+	apiBase         string       // API 基础 URL
+	proxy           string       // 代理 URL
+	model           string       // 模型名称
+	workspace       string       // 工作空间
+	connectMode     string       // 连接模式
+	enableWebSearch bool         // 是否启用 Web 搜索
 }
 
+// resolveProviderSelection 解析提供商选择配置
+// 根据 config 配置确定使用哪个提供商
 func resolveProviderSelection(cfg *config.Config) (providerSelection, error) {
 	model := cfg.Agents.Defaults.GetModelName()
 	providerName := strings.ToLower(cfg.Agents.Defaults.Provider)
