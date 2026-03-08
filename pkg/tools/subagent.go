@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现子代理管理工具（subagent）
+// 用于创建和管理后台子代理任务
 package tools
 
 import (
@@ -10,39 +13,49 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+// SubagentTask 子代理任务结构
+// 跟踪子代理任务的状态和结果
 type SubagentTask struct {
-	ID            string
-	Task          string
-	Label         string
-	AgentID       string
-	OriginChannel string
-	OriginChatID  string
-	Status        string
-	Result        string
-	Created       int64
+	ID            string // 任务 ID
+	Task          string // 任务描述
+	Label         string // 任务标签（可选）
+	AgentID       string // 目标代理 ID
+	OriginChannel string // 原始渠道
+	OriginChatID  string // 原始聊天 ID
+	Status        string // 任务状态
+	Result        string // 任务结果
+	Created       int64  // 创建时间戳
 }
 
+// SubagentManager 子代理管理器
+// 管理多个子代理任务的创建和执行
 type SubagentManager struct {
-	tasks          map[string]*SubagentTask
-	mu             sync.RWMutex
-	provider       providers.LLMProvider
-	defaultModel   string
-	bus            *bus.MessageBus
-	workspace      string
-	tools          *ToolRegistry
-	maxIterations  int
-	maxTokens      int
-	temperature    float64
-	hasMaxTokens   bool
-	hasTemperature bool
-	nextID         int
+	tasks          map[string]*SubagentTask // 任务映射
+	mu             sync.RWMutex             // 读写锁
+	provider       providers.LLMProvider    // LLM 提供商
+	defaultModel   string                   // 默认模型
+	bus            *bus.MessageBus          // 消息总线
+	workspace      string                   // 工作空间
+	tools          *ToolRegistry            // 工具注册表
+	maxIterations  int                      // 最大迭代次数
+	maxTokens      int                      // 最大令牌数
+	temperature    float64                  // 温度参数
+	hasMaxTokens   bool                     // 是否设置了最大令牌数
+	hasTemperature bool                     // 是否设置了温度
+	nextID         int                      // 下一个任务 ID
 }
 
+// NewSubagentManager 创建新的子代理管理器
+//
+// 参数：
+// - provider: LLM 提供商
+// - defaultModel: 默认模型
+// - workspace: 工作空间
+// - bus: 消息总线
+//
+// 返回：
+// - *SubagentManager: 子代理管理器
 func NewSubagentManager(
-	provider providers.LLMProvider,
-	defaultModel, workspace string,
-	bus *bus.MessageBus,
-) *SubagentManager {
 	return &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
 		provider:      provider,

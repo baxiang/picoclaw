@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现技能搜索工具（find_skills）
+// 允许从注册中心搜索可安装的技能
 package tools
 
 import (
@@ -8,15 +11,25 @@ import (
 	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
-// FindSkillsTool allows the LLM agent to search for installable skills from registries.
+// FindSkillsTool 技能搜索工具
+// 允许 LLM agent 从注册中心搜索可安装的技能
+//
+// 字段说明：
+// - registryMgr: 注册表管理器
+// - cache: 搜索缓存（用于去重）
 type FindSkillsTool struct {
 	registryMgr *skills.RegistryManager
 	cache       *skills.SearchCache
 }
 
-// NewFindSkillsTool creates a new FindSkillsTool.
-// registryMgr is the shared registry manager (built from config in createToolRegistry).
-// cache is the search cache for deduplicating similar queries.
+// NewFindSkillsTool 创建新的技能搜索工具
+//
+// 参数：
+// - registryMgr: 注册表管理器（从配置构建）
+// - cache: 搜索缓存（用于去重相似查询）
+//
+// 返回：
+// - *FindSkillsTool: 技能搜索工具
 func NewFindSkillsTool(registryMgr *skills.RegistryManager, cache *skills.SearchCache) *FindSkillsTool {
 	return &FindSkillsTool{
 		registryMgr: registryMgr,

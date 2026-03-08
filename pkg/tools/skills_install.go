@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现技能安装工具（install_skill）
+// 允许从注册中心下载和安装技能
 package tools
 
 import (
@@ -15,18 +18,27 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
-// InstallSkillTool allows the LLM agent to install skills from registries.
-// It shares the same RegistryManager that FindSkillsTool uses,
-// so all registries configured in config are available for installation.
+// InstallSkillTool 技能安装工具
+// 允许 LLM agent 从注册中心安装技能
+//
+// 字段说明：
+// - registryMgr: 注册表管理器
+// - workspace: 工作空间路径
+// - mu: 互斥锁（防止并发安装）
 type InstallSkillTool struct {
 	registryMgr *skills.RegistryManager
 	workspace   string
 	mu          sync.Mutex
 }
 
-// NewInstallSkillTool creates a new InstallSkillTool.
-// registryMgr is the shared registry manager (same instance as FindSkillsTool).
-// workspace is the root workspace directory; skills install to {workspace}/skills/{slug}/.
+// NewInstallSkillTool 创建新的技能安装工具
+//
+// 参数：
+// - registryMgr: 注册表管理器（与 FindSkillsTool 共享）
+// - workspace: 工作空间路径，技能安装到 {workspace}/skills/{slug}/
+//
+// 返回：
+// - *InstallSkillTool: 技能安装工具
 func NewInstallSkillTool(registryMgr *skills.RegistryManager, workspace string) *InstallSkillTool {
 	return &InstallSkillTool{
 		registryMgr: registryMgr,
