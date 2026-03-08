@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现 Shell 命令执行工具（exec）
+// 包含安全模式，阻止危险命令执行
 package tools
 
 import (
@@ -16,67 +19,82 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
+// ExecTool Shell 命令执行工具
+// 支持安全模式，阻止危险命令（如 rm -rf、shutdown 等）
 type ExecTool struct {
-	workingDir          string
-	timeout             time.Duration
-	denyPatterns        []*regexp.Regexp
-	allowPatterns       []*regexp.Regexp
-	customAllowPatterns []*regexp.Regexp
-	restrictToWorkspace bool
+	workingDir          string           // 工作目录
+	timeout             time.Duration    // 超时时间
+	denyPatterns        []*regexp.Regexp // 禁止的命令模式
+	allowPatterns       []*regexp.Regexp // 允许的命令模式
+	customAllowPatterns []*regexp.Regexp // 自定义允许模式
+	restrictToWorkspace bool             // 是否限制在工作空间内
 }
 
+// 默认禁止的命令模式（安全保护）
 var (
 	defaultDenyPatterns = []*regexp.Regexp{
+		// 危险删除命令
 		regexp.MustCompile(`\brm\s+-[rf]{1,2}\b`),
 		regexp.MustCompile(`\bdel\s+/[fq]\b`),
 		regexp.MustCompile(`\brmdir\s+/s\b`),
-		// Match disk wiping commands (must be followed by space/args)
-		regexp.MustCompile(
-			`\b(format|mkfs|diskpart)\b\s`,
-		),
+		// 磁盘格式化/擦除命令
+		regexp.MustCompile(`\b(format|mkfs|diskpart)\b\s`),
 		regexp.MustCompile(`\bdd\s+if=`),
-		// Block writes to block devices (all common naming schemes).
-		regexp.MustCompile(
-			`>\s*/dev/(sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|loop\d|dm-\d|md\d|sr\d|nbd\d)`,
-		),
+		// 阻止写入块设备
+		regexp.MustCompile(`>\s*/dev/(sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|loop\d|nvme\d|mmcblk\d)`),
+		// 系统控制命令
 		regexp.MustCompile(`\b(shutdown|reboot|poweroff)\b`),
-		regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`),
-		regexp.MustCompile(`\$\([^)]+\)`),
-		regexp.MustCompile(`\$\{[^}]+\}`),
-		regexp.MustCompile("`[^`]+`"),
+		// 代码注入和命令替换
+		regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`),  // Fork bomb
+		regexp.MustCompile(`\$\([^)]+\)`),           // 命令替换 $()
+		regexp.MustCompile(`\$\{[^}]+\}`),           // 变量扩展 ${}
+		regexp.MustCompile("`[^`]+`"),               // 反引号命令替换
+		// 管道执行 shell
 		regexp.MustCompile(`\|\s*sh\b`),
 		regexp.MustCompile(`\|\s*bash\b`),
+		// 条件执行 rm
 		regexp.MustCompile(`;\s*rm\s+-[rf]`),
 		regexp.MustCompile(`&&\s*rm\s+-[rf]`),
 		regexp.MustCompile(`\|\|\s*rm\s+-[rf]`),
+		// Heredoc
 		regexp.MustCompile(`<<\s*EOF`),
+		// 动态执行
 		regexp.MustCompile(`\$\(\s*cat\s+`),
 		regexp.MustCompile(`\$\(\s*curl\s+`),
 		regexp.MustCompile(`\$\(\s*wget\s+`),
 		regexp.MustCompile(`\$\(\s*which\s+`),
+		// 提权命令
 		regexp.MustCompile(`\bsudo\b`),
 		regexp.MustCompile(`\bchmod\s+[0-7]{3,4}\b`),
 		regexp.MustCompile(`\bchown\b`),
+		// 进程控制
 		regexp.MustCompile(`\bpkill\b`),
 		regexp.MustCompile(`\bkillall\b`),
 		regexp.MustCompile(`\bkill\b`),
+		// 远程执行
 		regexp.MustCompile(`\bcurl\b.*\|\s*(sh|bash)`),
 		regexp.MustCompile(`\bwget\b.*\|\s*(sh|bash)`),
+		// 全局安装
 		regexp.MustCompile(`\bnpm\s+install\s+-g\b`),
 		regexp.MustCompile(`\bpip\s+install\s+--user\b`),
+		// 包管理
 		regexp.MustCompile(`\bapt\s+(install|remove|purge)\b`),
 		regexp.MustCompile(`\byum\s+(install|remove)\b`),
 		regexp.MustCompile(`\bdnf\s+(install|remove)\b`),
+		// 容器
 		regexp.MustCompile(`\bdocker\s+run\b`),
 		regexp.MustCompile(`\bdocker\s+exec\b`),
+		// Git 推送
 		regexp.MustCompile(`\bgit\s+push\b`),
 		regexp.MustCompile(`\bgit\s+force\b`),
+		// SSH 远程
 		regexp.MustCompile(`\bssh\b.*@`),
+		// 代码执行
 		regexp.MustCompile(`\beval\b`),
 		regexp.MustCompile(`\bsource\s+.*\.sh\b`),
 	}
 
-	// absolutePathPattern matches absolute file paths in commands (Unix and Windows).
+	// 绝对路径模式（Unix 和 Windows）
 	absolutePathPattern = regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
 
 	// safePaths are kernel pseudo-devices that are always safe to reference in

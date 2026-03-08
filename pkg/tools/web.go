@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现 Web 搜索和网页抓取工具
+// 支持多个搜索引擎：Brave、Tavily、DuckDuckGo、Perplexity、SearXNG、GLM Search
 package tools
 
 import (
@@ -17,29 +20,37 @@ import (
 const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-	// HTTP client timeouts for web tool providers.
+	// HTTP 客户端超时设置
 	searchTimeout     = 10 * time.Second // Brave, Tavily, DuckDuckGo
 	perplexityTimeout = 30 * time.Second // Perplexity (LLM-based, slower)
 	fetchTimeout      = 60 * time.Second // WebFetchTool
 
-	defaultMaxChars = 50000
-	maxRedirects    = 5
+	defaultMaxChars = 50000 // 默认最大字符数
+	maxRedirects    = 5     // 最大重定向次数
 )
 
-// Pre-compiled regexes for HTML text extraction
+// HTML 文本提取的正则表达式（预编译）
 var (
-	reScript     = regexp.MustCompile(`<script[\s\S]*?</script>`)
-	reStyle      = regexp.MustCompile(`<style[\s\S]*?</style>`)
-	reTags       = regexp.MustCompile(`<[^>]+>`)
-	reWhitespace = regexp.MustCompile(`[^\S\n]+`)
-	reBlankLines = regexp.MustCompile(`\n{3,}`)
+	reScript     = regexp.MustCompile(`<script[\s\S]*?</script>`)   // 移除 script 标签
+	reStyle      = regexp.MustCompile(`<style[\s\S]*?</style>`)     // 移除 style 标签
+	reTags       = regexp.MustCompile(`<[^>]+>`)                    // 移除所有 HTML 标签
+	reWhitespace = regexp.MustCompile(`[^\S\n]+`)                   // 规范化空白
+	reBlankLines = regexp.MustCompile(`\n{3,}`)                     // 移除多余空行
 
-	// DuckDuckGo result extraction
+	// DuckDuckGo 结果提取
 	reDDGLink    = regexp.MustCompile(`<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>`)
 	reDDGSnippet = regexp.MustCompile(`<a class="result__snippet[^"]*".*?>([\s\S]*?)</a>`)
 )
 
-// createHTTPClient creates an HTTP client with optional proxy support
+// createHTTPClient 创建带代理支持的 HTTP 客户端
+//
+// 参数：
+// - proxyURL: 代理 URL（可选）
+// - timeout: 超时时间
+//
+// 返回：
+// - *http.Client: HTTP 客户端
+// - error: 创建错误
 func createHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: timeout,

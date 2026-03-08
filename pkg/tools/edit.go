@@ -1,3 +1,5 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现文件编辑工具（edit_file 和 append_file）
 package tools
 
 import (
@@ -9,13 +11,21 @@ import (
 	"strings"
 )
 
-// EditFileTool edits a file by replacing old_text with new_text.
-// The old_text must exist exactly in the file.
+// EditFileTool 文件编辑工具
+// 通过替换 old_text 为 new_text 来编辑文件
 type EditFileTool struct {
 	fs fileSystem
 }
 
-// NewEditFileTool creates a new EditFileTool with optional directory restriction.
+// NewEditFileTool 创建新的文件编辑工具
+//
+// 参数：
+// - workspace: 工作空间路径
+// - restrict: 是否限制在工作空间内
+// - allowPaths: 允许的路径模式（可选）
+//
+// 返回：
+// - *EditFileTool: 文件编辑工具
 func NewEditFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *EditFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {

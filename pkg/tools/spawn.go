@@ -1,3 +1,6 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现子代理创建工具（spawn）
+// 用于创建后台子代理执行复杂或耗时的任务
 package tools
 
 import (
@@ -6,14 +9,23 @@ import (
 	"strings"
 )
 
+// SpawnTool 子代理创建工具
+// 创建后台子代理执行任务
 type SpawnTool struct {
-	manager        *SubagentManager
-	allowlistCheck func(targetAgentID string) bool
+	manager        *SubagentManager                        // 子代理管理器
+	allowlistCheck func(targetAgentID string) bool // 白名单检查函数
 }
 
-// Compile-time check: SpawnTool implements AsyncExecutor.
+// 编译时检查：SpawnTool 实现 AsyncExecutor 接口
 var _ AsyncExecutor = (*SpawnTool)(nil)
 
+// NewSpawnTool 创建新的子代理创建工具
+//
+// 参数：
+// - manager: 子代理管理器
+//
+// 返回：
+// - *SpawnTool: 子代理创建工具
 func NewSpawnTool(manager *SubagentManager) *SpawnTool {
 	return &SpawnTool{
 		manager: manager,
