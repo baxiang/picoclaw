@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现 Codex CLI 提供商（通过子进程调用 codex 命令）
 package providers
 
 import (
@@ -10,13 +12,20 @@ import (
 	"strings"
 )
 
-// CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
+// CodexCliProvider Codex CLI 提供商
+// 通过子进程执行 codex 命令实现 LLMProvider 接口
 type CodexCliProvider struct {
-	command   string
-	workspace string
+	command   string // codex 命令
+	workspace string // 工作空间
 }
 
-// NewCodexCliProvider creates a new Codex CLI provider.
+// NewCodexCliProvider 创建新的 Codex CLI 提供商
+//
+// 参数：
+// - workspace: 工作空间
+//
+// 返回：
+// - *CodexCliProvider: Codex CLI 提供商
 func NewCodexCliProvider(workspace string) *CodexCliProvider {
 	return &CodexCliProvider{
 		command:   "codex",

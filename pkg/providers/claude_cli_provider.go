@@ -1,3 +1,5 @@
+// Package providers 提供 LLM 提供商的接口定义和实现
+// 本文件实现 Claude CLI 提供商（通过子进程调用 claude 命令）
 package providers
 
 import (
@@ -9,13 +11,20 @@ import (
 	"strings"
 )
 
-// ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
+// ClaudeCliProvider Claude CLI 提供商
+// 通过子进程执行 claude 命令实现 LLMProvider 接口
 type ClaudeCliProvider struct {
-	command   string
-	workspace string
+	command   string // claude 命令
+	workspace string // 工作空间
 }
 
-// NewClaudeCliProvider creates a new Claude CLI provider.
+// NewClaudeCliProvider 创建新的 Claude CLI 提供商
+//
+// 参数：
+// - workspace: 工作空间
+//
+// 返回：
+// - *ClaudeCliProvider: Claude CLI 提供商
 func NewClaudeCliProvider(workspace string) *ClaudeCliProvider {
 	return &ClaudeCliProvider{
 		command:   "claude",
