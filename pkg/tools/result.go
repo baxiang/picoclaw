@@ -1,47 +1,61 @@
+// Package tools 提供 AI 工具的实现
+// 本文件实现工具执行结果结构（ToolResult）
 package tools
 
 import "encoding/json"
 
-// ToolResult represents the structured return value from tool execution.
-// It provides clear semantics for different types of results and supports
-// async operations, user-facing messages, and error handling.
+// ToolResult 工具执行结果结构
+// 提供清晰的语义区分不同类型的结果，支持异步操作、用户消息和错误处理
+//
+// 字段说明：
+// - ForLLM: 发送给 LLM 的上下文内容（必需）
+// - ForUser: 直接发送给用户的内容（可选）
+// - Silent: 是否静默（不发送用户消息）
+// - IsError: 是否表示错误
+// - Async: 是否异步执行
+// - Err: 底层错误（不 JSON 序列化）
+// - Media: 工具产生的媒体引用列表
 type ToolResult struct {
-	// ForLLM is the content sent to the LLM for context.
-	// Required for all results.
+	// ForLLM 是发送给 LLM 的内容，用于上下文
+	// 所有结果都必须有这个字段
 	ForLLM string `json:"for_llm"`
 
-	// ForUser is the content sent directly to the user.
-	// If empty, no user message is sent.
-	// Silent=true overrides this field.
+	// ForUser 是直接发送给用户的内容
+	// 如果为空，不发送用户消息
+	// Silent=true 时会忽略这个字段
 	ForUser string `json:"for_user,omitempty"`
 
-	// Silent suppresses sending any message to the user.
-	// When true, ForUser is ignored even if set.
+	// Silent 静默标志，为 true 时不发送任何用户消息
+	// 即使用户消息已设置也会被忽略
 	Silent bool `json:"silent"`
 
-	// IsError indicates whether the tool execution failed.
-	// When true, the result should be treated as an error.
+	// IsError 表示工具执行是否失败
+	// 为 true 时应作为错误处理
 	IsError bool `json:"is_error"`
 
-	// Async indicates whether the tool is running asynchronously.
-	// When true, the tool will complete later and notify via callback.
+	// Async 表示工具是否异步运行
+	// 为 true 时工具将稍后完成并通过回调通知
 	Async bool `json:"async"`
 
-	// Err is the underlying error (not JSON serialized).
-	// Used for internal error handling and logging.
+	// Err 是底层错误（不 JSON 序列化）
+	// 用于内部错误处理和日志记录
 	Err error `json:"-"`
 
-	// Media contains media store refs produced by this tool.
-	// When non-empty, the agent will publish these as OutboundMediaMessage.
+	// Media 包含此工具产生的媒体存储引用
+	// 如果非空，agent 将发布为 OutboundMediaMessage
 	Media []string `json:"media,omitempty"`
 }
 
-// NewToolResult creates a basic ToolResult with content for the LLM.
-// Use this when you need a simple result with default behavior.
+// NewToolResult 创建基本的工具结果
 //
-// Example:
+// 参数：
+// - forLLM: 发送给 LLM 的内容
 //
-//	result := NewToolResult("File updated successfully")
+// 返回：
+// - *ToolResult: 工具结果
+//
+// 示例：
+// result := NewToolResult("File updated successfully")
 func NewToolResult(forLLM string) *ToolResult {
 	return &ToolResult{
 		ForLLM: forLLM,

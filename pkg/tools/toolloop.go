@@ -4,6 +4,9 @@
 //
 // Copyright (c) 2026 PicoClaw contributors
 
+// Package tools 提供 AI 工具的实现
+// 本文件实现工具循环执行逻辑
+// 用于 main agent 和 subagent 重用核心 agent 逻辑
 package tools
 
 import (
@@ -17,29 +20,35 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
-// ToolLoopConfig configures the tool execution loop.
+// ToolLoopConfig 工具执行循环配置
 type ToolLoopConfig struct {
-	Provider      providers.LLMProvider
-	Model         string
-	Tools         *ToolRegistry
-	MaxIterations int
-	LLMOptions    map[string]any
+	Provider      providers.LLMProvider // LLM 提供商
+	Model         string                // 模型名称
+	Tools         *ToolRegistry         // 工具注册表
+	MaxIterations int                   // 最大迭代次数
+	LLMOptions    map[string]any        // LLM 选项
 }
 
-// ToolLoopResult contains the result of running the tool loop.
+// ToolLoopResult 工具循环执行结果
 type ToolLoopResult struct {
-	Content    string
-	Iterations int
+	Content    string // 最终内容
+	Iterations int    // 迭代次数
 }
 
-// RunToolLoop executes the LLM + tool call iteration loop.
-// This is the core agent logic that can be reused by both main agent and subagents.
+// RunToolLoop 执行 LLM + 工具调用迭代循环
+// 这是核心 agent 逻辑，可被 main agent 和 subagent 重用
+//
+// 参数：
+// - ctx: 上下文用于取消控制
+// - config: 工具循环配置
+// - messages: 消息列表
+// - channel: 渠道名称
+// - chatID: 聊天 ID
+//
+// 返回：
+// - *ToolLoopResult: 循环执行结果
+// - error: 执行错误
 func RunToolLoop(
-	ctx context.Context,
-	config ToolLoopConfig,
-	messages []providers.Message,
-	channel, chatID string,
-) (*ToolLoopResult, error) {
 	iteration := 0
 	var finalContent string
 

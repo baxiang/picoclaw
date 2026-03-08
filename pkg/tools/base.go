@@ -1,8 +1,11 @@
+// Package tools 提供 AI 工具的实现
+// 本文件定义工具接口和上下文辅助函数
 package tools
 
 import "context"
 
-// Tool is the interface that all tools must implement.
+// Tool 工具接口
+// 所有工具都必须实现此接口
 type Tool interface {
 	Name() string
 	Description() string
@@ -10,13 +13,13 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]any) *ToolResult
 }
 
-// --- Request-scoped tool context (channel / chatID) ---
+// --- 请求范围的工具上下文（渠道/chatID）---
 //
-// Carried via context.Value so that concurrent tool calls each receive
-// their own immutable copy — no mutable state on singleton tool instances.
+// 通过 context.Value 传递，因此并发工具调用各自接收
+// 不可变的副本 - 单例工具实例上没有可变状态
 //
-// Keys are unexported pointer-typed vars — guaranteed collision-free,
-// and only accessible through the helper functions below.
+// 键是未导出的指针类型变量 - 保证无冲突，
+// 只能通过下面的辅助函数访问
 
 type toolCtxKey struct{ name string }
 
@@ -25,7 +28,15 @@ var (
 	ctxKeyChatID  = &toolCtxKey{"chatID"}
 )
 
-// WithToolContext returns a child context carrying channel and chatID.
+// WithToolContext 返回携带 channel 和 chatID 的子上下文
+//
+// 参数：
+// - ctx: 父上下文
+// - channel: 渠道名称
+// - chatID: 聊天 ID
+//
+// 返回：
+// - context.Context: 子上下文
 func WithToolContext(ctx context.Context, channel, chatID string) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyChannel, channel)
 	ctx = context.WithValue(ctx, ctxKeyChatID, chatID)
